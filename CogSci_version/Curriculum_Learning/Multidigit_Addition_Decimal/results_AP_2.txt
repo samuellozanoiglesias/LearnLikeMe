@@ -1,0 +1,102 @@
+2025-01-21 02:14:06.532485: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2025-01-21 02:14:10.214161: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2025-01-21 02:14:23.560255: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Loaded trainable_model_2024_12_20_01_37_00.json
+Epoch 0, Loss: 17707.68359375, Correct predictions: 1, Correct predictions test: 0
+Epoch 10, Loss: 106.3238296508789, Correct predictions: 127, Correct predictions test: 0
+Epoch 20, Loss: 38.32833480834961, Correct predictions: 279, Correct predictions test: 0
+Epoch 30, Loss: 15.769575119018555, Correct predictions: 784, Correct predictions test: 0
+Epoch 40, Loss: 6.875117301940918, Correct predictions: 1338, Correct predictions test: 0
+Epoch 50, Loss: 3.0730409622192383, Correct predictions: 1998, Correct predictions test: 0
+Epoch 60, Loss: 1.3890540599822998, Correct predictions: 2985, Correct predictions test: 0
+Epoch 70, Loss: 0.6311914324760437, Correct predictions: 4329, Correct predictions test: 14
+Epoch 80, Loss: 0.28755447268486023, Correct predictions: 6372, Correct predictions test: 44
+Epoch 90, Loss: 0.13117003440856934, Correct predictions: 8103, Correct predictions test: 116
+Saved trained_model_2024_12_20_01_37_00.json
+Epoch 0, Loss: 0.06475645303726196, Correct predictions: 9983, Correct predictions test: 192
+Epoch 10, Loss: 0.027338126674294472, Correct predictions: 10000, Correct predictions test: 192
+Saved super_trained_model_2024_12_20_01_37_00.json
+Loaded trainable_model_2024_12_20_01_37_02.json
+Epoch 0, Loss: 34104.203125, Correct predictions: 1, Correct predictions test: 0
+Epoch 10, Loss: 49.67233657836914, Correct predictions: 139, Correct predictions test: 0
+Epoch 20, Loss: 19.874956130981445, Correct predictions: 282, Correct predictions test: 0
+Epoch 30, Loss: 9.086289405822754, Correct predictions: 924, Correct predictions test: 0
+Epoch 40, Loss: 4.231174468994141, Correct predictions: 1719, Correct predictions test: 0
+Epoch 50, Loss: 1.9608898162841797, Correct predictions: 2524, Correct predictions test: 0
+Epoch 60, Loss: 0.9033599495887756, Correct predictions: 3685, Correct predictions test: 2
+Epoch 70, Loss: 0.4145466387271881, Correct predictions: 5397, Correct predictions test: 16
+Epoch 80, Loss: 0.18981274962425232, Correct predictions: 7298, Correct predictions test: 74
+Epoch 90, Loss: 0.0868086963891983, Correct predictions: 9300, Correct predictions test: 166
+Saved trained_model_2024_12_20_01_37_02.json
+Epoch 0, Loss: 0.04290848970413208, Correct predictions: 10000, Correct predictions test: 192
+Epoch 10, Loss: 0.018128514289855957, Correct predictions: 10000, Correct predictions test: 192
+Saved super_trained_model_2024_12_20_01_37_02.json
+Loaded trainable_model_2024_12_20_01_37_04.json
+Epoch 0, Loss: 34458.5703125, Correct predictions: 1, Correct predictions test: 0
+Epoch 10, Loss: 124.24838256835938, Correct predictions: 71, Correct predictions test: 0
+Epoch 20, Loss: 45.135948181152344, Correct predictions: 289, Correct predictions test: 0
+Epoch 30, Loss: 18.54891014099121, Correct predictions: 867, Correct predictions test: 0
+Epoch 40, Loss: 8.066634178161621, Correct predictions: 1496, Correct predictions test: 0
+Epoch 50, Loss: 3.5989787578582764, Correct predictions: 2308, Correct predictions test: 0
+Epoch 60, Loss: 1.6250016689300537, Correct predictions: 3524, Correct predictions test: 2
+Epoch 70, Loss: 0.7379629611968994, Correct predictions: 5197, Correct predictions test: 16
+Epoch 80, Loss: 0.3360899090766907, Correct predictions: 7105, Correct predictions test: 72
+Epoch 90, Loss: 0.15328484773635864, Correct predictions: 9101, Correct predictions test: 164
+Saved trained_model_2024_12_20_01_37_04.json
+Epoch 0, Loss: 0.07566805183887482, Correct predictions: 10000, Correct predictions test: 192
+Epoch 10, Loss: 0.03194296360015869, Correct predictions: 10000, Correct predictions test: 192
+Saved super_trained_model_2024_12_20_01_37_04.json
+Loaded trainable_model_2024_12_20_01_37_06.json
+Epoch 0, Loss: 11064.3583984375, Correct predictions: 1, Correct predictions test: 0
+Epoch 10, Loss: 210.69406127929688, Correct predictions: 127, Correct predictions test: 0
+Epoch 20, Loss: 101.5780258178711, Correct predictions: 235, Correct predictions test: 0
+Epoch 30, Loss: 47.91334533691406, Correct predictions: 675, Correct predictions test: 0
+Epoch 40, Loss: 22.270687103271484, Correct predictions: 1076, Correct predictions test: 0
+Epoch 50, Loss: 10.26610279083252, Correct predictions: 1527, Correct predictions test: 0
+Epoch 60, Loss: 4.7114386558532715, Correct predictions: 2364, Correct predictions test: 0
+Epoch 70, Loss: 2.1572422981262207, Correct predictions: 3500, Correct predictions test: 2
+Epoch 80, Loss: 0.9865664839744568, Correct predictions: 5074, Correct predictions test: 16
+Epoch 90, Loss: 0.4509090185165405, Correct predictions: 7084, Correct predictions test: 70
+Saved trained_model_2024_12_20_01_37_06.json
+Epoch 0, Loss: 0.22281111776828766, Correct predictions: 8713, Correct predictions test: 150
+Epoch 10, Loss: 0.09411806613206863, Correct predictions: 10000, Correct predictions test: 192
+Saved super_trained_model_2024_12_20_01_37_06.json
+Loaded trainable_model_2024_12_20_01_37_08.json
+Epoch 0, Loss: 28198.7734375, Correct predictions: 1, Correct predictions test: 0
+Epoch 10, Loss: 47.058250427246094, Correct predictions: 139, Correct predictions test: 0
+Epoch 20, Loss: 18.322036743164062, Correct predictions: 388, Correct predictions test: 0
+Epoch 30, Loss: 8.288647651672363, Correct predictions: 1042, Correct predictions test: 0
+Epoch 40, Loss: 3.845693588256836, Correct predictions: 1921, Correct predictions test: 0
+Epoch 50, Loss: 1.7798248529434204, Correct predictions: 2781, Correct predictions test: 0
+Epoch 60, Loss: 0.819484531879425, Correct predictions: 4117, Correct predictions test: 10
+Epoch 70, Loss: 0.37596145272254944, Correct predictions: 6007, Correct predictions test: 28
+Epoch 80, Loss: 0.17212465405464172, Correct predictions: 7779, Correct predictions test: 100
+Epoch 90, Loss: 0.07871450483798981, Correct predictions: 9876, Correct predictions test: 190
+Saved trained_model_2024_12_20_01_37_08.json
+Epoch 0, Loss: 0.03890646621584892, Correct predictions: 10000, Correct predictions test: 192
+Epoch 10, Loss: 0.016437523066997528, Correct predictions: 10000, Correct predictions test: 192
+Saved super_trained_model_2024_12_20_01_37_08.json
+Loaded trainable_model_2024_12_20_01_37_10.json
+Epoch 0, Loss: 25893.73046875, Correct predictions: 1, Correct predictions test: 0
+Epoch 10, Loss: 93.1219711303711, Correct predictions: 127, Correct predictions test: 0
+Epoch 20, Loss: 39.92112731933594, Correct predictions: 362, Correct predictions test: 0
+Epoch 30, Loss: 17.74227523803711, Correct predictions: 809, Correct predictions test: 0
+Epoch 40, Loss: 8.003154754638672, Correct predictions: 1224, Correct predictions test: 0
+Epoch 50, Loss: 3.6336677074432373, Correct predictions: 1982, Correct predictions test: 0
+Epoch 60, Loss: 1.6548110246658325, Correct predictions: 2907, Correct predictions test: 0
+Epoch 70, Loss: 0.7547290325164795, Correct predictions: 4241, Correct predictions test: 14
+Epoch 80, Loss: 0.34446972608566284, Correct predictions: 6210, Correct predictions test: 42
+Epoch 90, Loss: 0.157279372215271, Correct predictions: 7963, Correct predictions test: 106
+Saved trained_model_2024_12_20_01_37_10.json
+Epoch 0, Loss: 0.07768021523952484, Correct predictions: 9876, Correct predictions test: 190
+Epoch 10, Loss: 0.03280314430594444, Correct predictions: 10000, Correct predictions test: 192
+Saved super_trained_model_2024_12_20_01_37_10.json
+Loaded trainable_model_2024_12_20_01_37_12.json
+Epoch 0, Loss: 27325.51171875, Correct predictions: 1, Correct predictions test: 0
+Epoch 10, Loss: 232.22064208984375, Correct predictions: 7, Correct predictions test: 0
+Epoch 20, Loss: 88.60444641113281, Correct predictions: 154, Correct predictions test: 0
+Epoch 30, Loss: 37.56793212890625, Correct predictions: 516, Correct predictions test: 0
+Epoch 40, Loss: 16.62173843383789, Correct predictions: 1009, Correct predictions test: 0
+Epoch 50, Loss: 7.483286380767822, Correct predictions: 1569, Correct predictions test: 0
+Epoch 60, Loss: 3.394644260406494, Correct predictions: 2434, Correct predictions test: 0
