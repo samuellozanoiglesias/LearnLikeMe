@@ -1,0 +1,15 @@
+name: little_learner
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python>=3.8
+  - pip
+  - jax
+  - flax
+  - optax
+  - pandas
+  - scikit-learn
+  - pip:
+      - little_learner
+      - -e .
