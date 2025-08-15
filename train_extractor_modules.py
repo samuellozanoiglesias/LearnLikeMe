@@ -36,7 +36,7 @@ else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}" 
 SAVE_DIR = f"{RAW_DIR}/Training_{timestamp}"
-PARAMS_DIR = f"{RAW_DIR}/Initial_Parameters"
+PARAMS_DIR = f"{RAW_DIR}/initial_parameters"
 
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -119,17 +119,18 @@ for epoch in range(EPOCHS):
         x_batch = x_train[i:i + BATCH_SIZE]
         y_batch = y_train[i:i + BATCH_SIZE]
         state = train_step(model, state, x_batch, y_batch)
-    accuracy = evaluate(model, state.params, x_val, y_val)
-    loss = compute_loss(model, state.params, x_val, y_val)
-
-    pd.DataFrame([{
-        "epoch": epoch + 1,
-        "loss": float(loss),
-        "accuracy": float(accuracy)
-    }]).to_csv(log_path, mode='a', index=False, header=first_write)
-    first_write = False
 
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
+        accuracy = evaluate(model, state.params, x_val, y_val)
+        loss = compute_loss(model, state.params, x_val, y_val)
+
+        pd.DataFrame([{
+            "epoch": epoch + 1,
+            "loss": float(loss),
+            "accuracy": float(accuracy)
+        }]).to_csv(log_path, mode='a', index=False, header=first_write)
+        first_write = False
+        
         print(f"Epoch {epoch + 1}, Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
     
     if (epoch + 1) % CHECKPOINT_EVERY == 0:
