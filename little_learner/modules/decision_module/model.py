@@ -4,15 +4,15 @@ import jax.numpy as jnp
 from ..extractor_modules.models import CarryLSTMModel, UnitLSTMModel
 
 
-def decision_model(params: dict, x: jnp.ndarray, unit_model: dict, carry_model: dict) -> tuple:
+def decision_model(params: dict, x: jnp.ndarray, unit_module: dict, carry_module: dict) -> tuple:
     """
     Forward pass of the decision module.
     
     Args:
         params: Dictionary containing the trainable parameters
         x: Input tensor of shape (batch_size, 4) containing [tens1, units1, tens2, units2]
-        unit_model: Pre-trained unit extraction model parameters
-        carry_model: Pre-trained carry detection model parameters
+        unit_module: Pre-trained unit extraction model parameters
+        carry_module: Pre-trained carry detection model parameters
         
     Returns:
         Tuple (tens_out, units_out) containing predicted tens and units of the sum
@@ -28,8 +28,8 @@ def decision_model(params: dict, x: jnp.ndarray, unit_model: dict, carry_model: 
             units_input = units_inputs[:, None, :]
             
             # Get predictions from pre-trained models
-            unit_output = UnitLSTMModel().apply({'params': unit_model}, units_input)
-            carry_output = CarryLSTMModel().apply({'params': carry_model}, units_input)
+            unit_output = UnitLSTMModel().apply({'params': unit_module}, units_input)
+            carry_output = CarryLSTMModel().apply({'params': carry_module}, units_input)
             
             # Store predictions
             unit_val[f'{i}_{j}'] = jnp.argmax(unit_output, axis=-1)

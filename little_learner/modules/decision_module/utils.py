@@ -161,19 +161,30 @@ def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int,
     
     return jnp.array(x_data), jnp.array(y_data)
 
-def load_extractor_model(omega: float, models_dir: str, model_type: str) -> Tuple[dict, dict]:
+def load_extractor_module(omega: float, modules_dir: str, model_type: str) -> Tuple[dict, dict]:
     """
     Load pre-trained carry and unit extractor models for a given omega value.
     
     Args:
         omega: The omega value used for training
-        models_dir: Directory containing the pre-trained models
+        modules_dir: Directory containing the pre-trained models
         model_type: Type of model to load ('carry_over_extractor' or 'unit_extractor')
-        
-    Returns:
-        Tuple (carry_model, unit_model) containing the model parameters
     """
-    model_path = os.path.join(models_dir, f"{model_type}/omega_{omega:.2f}/trained_model.pkl")
+    model_path = os.path.join(modules_dir, f"{model_type}/omega_{omega:.2f}/trained_model.pkl")
+    
+    with open(model_path, "rb") as f:
+        model = pickle.load(f)
+
+    return model
+
+def load_decision_module(model_dir: str) -> Tuple[dict, dict]:
+    """
+    Load pre-trained decision models for a given epsilon value.
+    
+    Args:
+        model_dir: Directory containing the trained model
+    """
+    model_path = os.path.join(model_dir, "trained_model.pkl")
     
     with open(model_path, "rb") as f:
         model = pickle.load(f)
@@ -255,7 +266,7 @@ def generate_balanced_dataset(train_pairs: List[Tuple[int, int]],
     
     return balanced_pairs
 
-def save_results_and_model(df_results, final_accuracy, model_params, save_dir, best=False, checkpoint_number=None):
+def save_results_and_module(df_results, final_accuracy, model_params, save_dir, best=False, checkpoint_number=None):
     """
     Save the results DataFrame, accuracy, and model parameters in a timestamped folder.
     """
@@ -287,3 +298,4 @@ def save_results_and_model(df_results, final_accuracy, model_params, save_dir, b
 
     print(f"Results, accuracy, and model saved in '{save_dir}'")
     return save_dir
+

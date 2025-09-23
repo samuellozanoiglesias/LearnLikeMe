@@ -8,16 +8,16 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from little_learner.modules.decision_module.utils import (
     load_dataset, generate_train_dataset, generate_test_dataset,
-    save_results_and_model, load_extractor_model, create_and_save_decision_params, load_initial_params
+    save_results_and_module, load_extractor_module, create_and_save_decision_params, load_initial_params
 )
 from little_learner.modules.decision_module.train_utils import (
-    evaluate_model, update_params
+    evaluate_module, update_params
 )
 
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit or Local
 EPSILON = float(sys.argv[1])  # Noise factor for parameter initialization
-PARAM_TYPE = sys.argv[2]  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+PARAM_TYPE = str(sys.argv[2]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
 
 # --- Training Parameters ---
 OMEGA_UNIT = 0.05  # Omega value for loading pre-trained unit_extractor
@@ -43,7 +43,7 @@ else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
 RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module"
-SAVE_DIR = f"{RAW_DIR}/Training_{timestamp}"
+SAVE_DIR = f"{RAW_DIR}/{PARAM_TYPE}/epsilon_{EPSILON:.2f}/Training_{timestamp}"
 PARAMS_DIR = f"{RAW_DIR}/initial_parameters"
 MODELS_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe"
 DATASET_DIR = f"datasets"
@@ -56,8 +56,8 @@ os.makedirs(PARAMS_DIR, exist_ok=True)
 # Load datasets and extractors
 train_pairs = load_dataset(os.path.join(DATASET_DIR, "train_pairs_not_in_stimuli.txt"))
 test_pairs = load_dataset(os.path.join(DATASET_DIR, "stimuli_test_pairs.txt"))
-carry_model = load_extractor_model(OMEGA_CARRY, MODELS_DIR, model_type='carry_over_extractor')
-unit_model = load_extractor_model(OMEGA_UNIT, MODELS_DIR, model_type='unit_extractor')
+carry_module = load_extractor_module(OMEGA_CARRY, MODELS_DIR, model_type='carry_over_extractor')
+unit_module = load_extractor_module(OMEGA_UNIT, MODELS_DIR, model_type='unit_extractor')
 
 # Generate initial test dataset
 x_test, y_test = generate_test_dataset(test_pairs)
@@ -68,6 +68,8 @@ with open(config_path, "w") as f:
     f.write(f"Training ID: {timestamp}\n")
     f.write(f"Cluster Directory: {CLUSTER if CLUSTER else ''}\n")
     f.write(f"Module Name: decision_module\n")
+    f.write(f"Parameter type (Wise initialization or Random initialization): {PARAM_TYPE}\n")
+    f.write(f"Noise for initialization parameters: {EPSILON}\n")
     f.write(f"Learning Rate: {LEARNING_RATE}\n")
     f.write(f"Epochs: {EPOCHS}\n")
     f.write(f"Batch Size: {BATCH_SIZE}\n")
@@ -92,7 +94,6 @@ else:
 # --- Training Loop ---
 log_path = os.path.join(SAVE_DIR, "training_log.csv")
 first_write = True
-best_accuracy = 0
 threshold = Decimal('1.0') - Decimal(str(FINISH_TOLERANCE))
 
 for epoch in range(EPOCHS):
@@ -100,12 +101,12 @@ for epoch in range(EPOCHS):
     x_train, y_train = generate_train_dataset(train_pairs, BATCH_SIZE, distribution=TRAINING_DISTRIBUTION_TYPE)
     
     # Update parameters
-    params = update_params(params, x_train, y_train, unit_model, carry_model, LEARNING_RATE)
+    params = update_params(params, x_train, y_train, unit_module, carry_module, LEARNING_RATE)
     
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
         # Evaluate on test set
-        pred_count, pred_count_test, loss = evaluate_model(
-            params, x_test, y_test, unit_model, carry_model, test_pairs
+        pred_count, pred_count_test, loss = evaluate_module(
+            params, x_test, y_test, unit_module, carry_module, test_pairs
         )
         
         accuracy = pred_count_test / len(test_pairs)
@@ -123,14 +124,9 @@ for epoch in range(EPOCHS):
         print(f"Epoch {epoch + 1}, Loss: {loss:.4f}, Accuracy: {accuracy:.4f}, "
               f"Correct: {pred_count}/{len(x_test)}, Test Correct: {pred_count_test}/{len(test_pairs)}")
         
-        # Save best model
-        if accuracy > best_accuracy:
-            best_accuracy = accuracy
-            save_results_and_model(None, accuracy, params, SAVE_DIR, best=True)
-    
     # Save periodic checkpoint
     if (epoch + 1) % CHECKPOINT_EVERY == 0:
-        save_results_and_model(None, accuracy, params, SAVE_DIR, checkpoint_number=epoch + 1)
+        save_results_and_module(None, accuracy, params, SAVE_DIR, checkpoint_number=epoch + 1)
     
     # Early stopping check
     accuracy_dec = Decimal(str(accuracy)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -139,8 +135,8 @@ for epoch in range(EPOCHS):
         break
 
 # --- Final Evaluation ---
-final_pred_count, final_pred_count_test, final_loss = evaluate_model(
-    params, x_test, y_test, unit_model, carry_model, test_pairs
+final_pred_count, final_pred_count_test, final_loss = evaluate_module(
+    params, x_test, y_test, unit_module, carry_module, test_pairs
 )
 final_accuracy = final_pred_count_test / len(test_pairs)
 print(f"\nTraining completed:")
@@ -151,7 +147,7 @@ print(f"Test Set Correct: {final_pred_count_test}/{len(test_pairs)}")
 
 # --- Results Table ---
 # Get predictions for all test examples
-pred_count, pred_count_test, loss, final_preds = evaluate_model(params, x_test, y_test, unit_model, carry_model, test_pairs, return_predictions=True)
+pred_count, pred_count_test, loss, final_preds = evaluate_module(params, x_test, y_test, unit_module, carry_module, test_pairs, return_predictions=True)
 results = []
 for i in range(len(test_pairs)):
     x1, x2 = test_pairs[i]
@@ -167,4 +163,4 @@ for i in range(len(test_pairs)):
 df_results = pd.DataFrame(results)
 
 # --- Save Final Model ---
-save_results_and_model(df_results, final_accuracy, params, SAVE_DIR)
+save_results_and_module(df_results, final_accuracy, params, SAVE_DIR)

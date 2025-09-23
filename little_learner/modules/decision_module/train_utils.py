@@ -11,7 +11,7 @@ from typing import Tuple, List, Dict, Any, Union
 from .model import decision_model
 
 def compute_loss(params: dict, x: jnp.ndarray, y: jnp.ndarray, 
-                unit_model: dict, carry_model: dict) -> float:
+                unit_module: dict, carry_module: dict) -> float:
     """
     Compute MSE loss for the decision module.
     
@@ -19,19 +19,19 @@ def compute_loss(params: dict, x: jnp.ndarray, y: jnp.ndarray,
         params: Decision module parameters
         x: Input data
         y: Target outputs
-        unit_model: Pre-trained unit extractor parameters
-        carry_model: Pre-trained carry detector parameters
+        unit_module: Pre-trained unit extractor parameters
+        carry_module: Pre-trained carry detector parameters
         
     Returns:
         Mean squared error loss
     """
-    y_pred_1, y_pred_2 = decision_model(params, x, unit_model, carry_model)
+    y_pred_1, y_pred_2 = decision_model(params, x, unit_module, carry_module)
     return jnp.mean((y_pred_1 - y[:, 0]) ** 2) + jnp.mean((y_pred_2 - y[:, 1]) ** 2)
 
 
 @jax.jit
 def update_params(params: dict, x: jnp.ndarray, y: jnp.ndarray, 
-                 unit_model: dict, carry_model: dict, lr: float) -> dict:
+                 unit_module: dict, carry_module: dict, lr: float) -> dict:
     """
     Update model parameters using gradient descent.
     
@@ -39,19 +39,19 @@ def update_params(params: dict, x: jnp.ndarray, y: jnp.ndarray,
         params: Current model parameters
         x: Input data
         y: Target outputs
-        unit_model: Pre-trained unit extractor parameters
-        carry_model: Pre-trained carry detector parameters
+        unit_module: Pre-trained unit extractor parameters
+        carry_module: Pre-trained carry detector parameters
         lr: Learning rate
         
     Returns:
         Updated parameters
     """
-    grads = jax.grad(compute_loss)(params, x, y, unit_model, carry_model)
+    grads = jax.grad(compute_loss)(params, x, y, unit_module, carry_module)
     return jax.tree_util.tree_map(lambda p, g: p - lr * g, params, grads)
 
 
-def evaluate_model(params: dict, x_test: jnp.ndarray, y_test: jnp.ndarray,
-                  unit_model: dict, carry_model: dict, 
+def evaluate_module(params: dict, x_test: jnp.ndarray, y_test: jnp.ndarray,
+                  unit_module: dict, carry_module: dict, 
                   test_pairs: List[Tuple[int, int]] = None,
                   return_predictions: bool = False) -> Union[Tuple[int, int, float], 
                                                           Tuple[int, int, float, jnp.ndarray]]:
@@ -62,8 +62,8 @@ def evaluate_model(params: dict, x_test: jnp.ndarray, y_test: jnp.ndarray,
         params: Model parameters
         x_test: Test inputs
         y_test: Test targets
-        unit_model: Pre-trained unit extractor parameters
-        carry_model: Pre-trained carry detector parameters
+        unit_module: Pre-trained unit extractor parameters
+        carry_module: Pre-trained carry detector parameters
         test_pairs: Optional list of test pairs for specific accuracy calculation
         return_predictions: If True, also return array of predictions
         
@@ -73,8 +73,8 @@ def evaluate_model(params: dict, x_test: jnp.ndarray, y_test: jnp.ndarray,
         If return_predictions is True:
             Tuple (total correct predictions, test set correct predictions, loss, predictions)
     """
-    pred_tens, pred_units = decision_model(params, x_test, unit_model, carry_model)
-    loss = compute_loss(params, x_test, y_test, unit_model, carry_model)
+    pred_tens, pred_units = decision_model(params, x_test, unit_module, carry_module)
+    loss = compute_loss(params, x_test, y_test, unit_module, carry_module)
     
     pred_count = 0
     pred_count_test = 0
