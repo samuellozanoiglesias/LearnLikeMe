@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from little_learner.modules.extractor_modules.utils import (
-    create_and_save_initial_params, load_initial_params, generate_unit_data, generate_carry_data, one_hot_encode, save_results_and_model
+    create_and_save_initial_params, load_initial_params, generate_unit_data, generate_carry_data, one_hot_encode, save_results_and_module
 )
 from little_learner.modules.extractor_modules.models import UnitLSTMModel, CarryLSTMModel
 from little_learner.modules.extractor_modules.train_utils import (
@@ -135,7 +135,7 @@ for epoch in range(EPOCHS):
     
     if (epoch + 1) % CHECKPOINT_EVERY == 0:
         checkpoint_path = os.path.join(SAVE_DIR, f"checkpoint_epoch_{epoch+1}.params")
-        save_results_and_model(df_results=None, final_accuracy=None, model_params=state.params, save_dir=SAVE_DIR, checkpoint_number=epoch + 1)
+        save_results_and_module(df_results=None, final_accuracy=None, model_params=state.params, save_dir=SAVE_DIR, checkpoint_number=epoch + 1)
     
     accuracy_dec = Decimal(str(accuracy)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     if accuracy_dec >= threshold:
@@ -159,4 +159,4 @@ df_results = pd.DataFrame(results)
 print(df_results)
 
 # --- Save Everything ---
-save_results_and_model(df_results, final_accuracy, state.params, SAVE_DIR)
+save_results_and_module(df_results, final_accuracy, state.params, SAVE_DIR)

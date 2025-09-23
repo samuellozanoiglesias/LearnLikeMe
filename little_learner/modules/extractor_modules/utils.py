@@ -8,7 +8,7 @@ import pickle
 from sklearn.preprocessing import OneHotEncoder
 
 # -------------------- Data Utilities --------------------
-def save_results_and_model(df_results, final_accuracy, model_params, save_dir, checkpoint_number=None):
+def save_results_and_module(df_results, final_accuracy, model_params, save_dir, checkpoint_number=None):
     """
     Save the results DataFrame, accuracy, and model parameters in a timestamped folder.
     """
