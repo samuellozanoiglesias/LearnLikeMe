@@ -6,6 +6,7 @@ import random
 import pickle
 from datetime import datetime
 import jax.numpy as jnp
+from jax import random as jrandom
 import numpy as np
 from typing import List, Tuple
 
@@ -39,7 +40,7 @@ def create_and_save_decision_params(
     # Set initial values based on parameter type
     # For wise initialization (WI), we set specific weights to 1
     # These represent the correct dependencies for the module to work
-    if param_type == 'AP':
+    if param_type == 'WI':
         v_params.update({
             'v_0_1_1_3': 1.0,  # Carry from units to tens
             'v_1_1_0_2': 1.0,  # Tens digits contribution
@@ -119,8 +120,8 @@ def generate_test_dataset(test_pairs: List[Tuple[int, int]]) -> Tuple[jnp.ndarra
     return jnp.array(x_data), jnp.array(y_data)
 
 
-def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int,
-                         distribution: str) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int, omega: float, distribution: str,
+                           seed: int = 0) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Generate training dataset with optional curriculum learning.
     
@@ -152,6 +153,7 @@ def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int,
         b_unit = b % 10
 
         x_data.append([a_dec, a_unit, b_dec, b_unit])
+        
 
         # Calculate target outputs
         sum_units = (a_unit + b_unit) % 10
@@ -159,7 +161,16 @@ def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int,
         sum_dec = (a_dec + b_dec + carry_units) % 10
         y_data.append([sum_dec, sum_units])
     
-    return jnp.array(x_data), jnp.array(y_data)
+    # Convert to JAX array
+    x_data = jnp.array(x_data)
+    y_data = jnp.array(y_data)
+
+    # Generate samples from N(mean=x_data, std=omega*|x_data|)
+    rng = jrandom.PRNGKey(seed)
+    std = omega * jnp.abs(x_data)
+    x_data = x_data + jrandom.normal(rng, shape=x_data.shape) * std
+
+    return x_data, y_data
 
 def load_extractor_module(omega: float, modules_dir: str, model_type: str) -> Tuple[dict, dict]:
     """
@@ -170,21 +181,81 @@ def load_extractor_module(omega: float, modules_dir: str, model_type: str) -> Tu
         modules_dir: Directory containing the pre-trained models
         model_type: Type of model to load ('carry_over_extractor' or 'unit_extractor')
     """
-    model_path = os.path.join(modules_dir, f"{model_type}/omega_{omega:.2f}/trained_model.pkl")
-    
+    # Look for Training_* folders under modules_dir/model_type and read their config.txt
+    model_base = os.path.join(modules_dir, model_type)
+    candidates = []
+    if os.path.isdir(model_base):
+        for name in os.listdir(model_base):
+            if not name.startswith("Training_"):
+                continue
+            folder = os.path.join(model_base, name)
+            if not os.path.isdir(folder):
+                continue
+            config_path = os.path.join(folder, "config.txt")
+            if not os.path.exists(config_path):
+                continue
+            # read config and look for Weber fraction
+            try:
+                with open(config_path, "r") as f:
+                    for line in f:
+                        if "Weber fraction" in line:
+                            # try to parse a float from the line
+                            try:
+                                val = float(line.strip().split(":")[-1])
+                            except Exception:
+                                # try to extract digits with replace
+                                import re
+                                m = re.search(r"([0-9]*\.?[0-9]+)", line)
+                                if m:
+                                    val = float(m.group(1))
+                                else:
+                                    val = None
+                            if val is not None:
+                                # consider it a candidate if close to requested omega
+                                if abs(val - omega) <= 1e-6:
+                                    candidates.append(folder)
+                            break
+            except Exception:
+                continue
+
+    chosen_folder = None
+    if candidates:
+        # pick the most recent matching folder (by name or mtime)
+        try:
+            chosen_folder = max(candidates, key=lambda p: os.path.getmtime(p))
+        except Exception:
+            chosen_folder = sorted(candidates)[-1]
+
+    # fallback to legacy path structure if no training folder matched
+    if chosen_folder is None:
+        legacy_path = os.path.join(modules_dir, f"{model_type}", f"omega_{omega:.2f}")
+        if os.path.isdir(legacy_path):
+            chosen_folder = legacy_path
+
+    if chosen_folder is None:
+        raise FileNotFoundError(f"No trained extractor found for model_type={model_type} and omega={omega}")
+
+    model_path = os.path.join(chosen_folder, "trained_model.pkl")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"trained_model.pkl not found in {chosen_folder}")
+
     with open(model_path, "rb") as f:
         model = pickle.load(f)
 
-    return model
+    return model, chosen_folder
 
-def load_decision_module(model_dir: str) -> Tuple[dict, dict]:
+def load_decision_module(model_dir: str, checkpoint: int = None) -> Tuple[dict, dict]:
     """
     Load pre-trained decision models for a given epsilon value.
     
     Args:
         model_dir: Directory containing the trained model
+        checkpoint: Checkpoint file name
     """
-    model_path = os.path.join(model_dir, "trained_model.pkl")
+    if checkpoint is None:
+        model_path = os.path.join(model_dir, "trained_model.pkl")
+    else:
+        model_path = os.path.join(model_dir, f"trained_model_checkpoint_{checkpoint}.pkl")
     
     with open(model_path, "rb") as f:
         model = pickle.load(f)
@@ -296,6 +367,6 @@ def save_results_and_module(df_results, final_accuracy, model_params, save_dir, 
     with open(model_path, "wb") as f:
         pickle.dump(model_params, f)
 
-    print(f"Results, accuracy, and model saved in '{save_dir}'")
+    #print(f"Results, accuracy, and model saved in '{save_dir}'")
     return save_dir
 

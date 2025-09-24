@@ -5,7 +5,7 @@ import optax
 from flax.training import train_state
 
 def load_train_state(model, learning_rate, initial_params):
-    tx = optax.sgd(learning_rate)
+    tx = optax.adam(learning_rate)
     return train_state.TrainState.create(apply_fn=model.apply, params=initial_params, tx=tx)
 
 def compute_loss(model, params, x, y):
@@ -29,4 +29,4 @@ def train_step(model, state, x, y):
     loss_fn = lambda params: compute_loss(model, params, x, y)
     grads = jax.grad(loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
-    return state
+    return state, grads

@@ -47,7 +47,7 @@ class ArithmeticDatasetGenerator:
                 if has_carry and (a + b < 100):
                     data.append((a, b))
         
-        self._save_dataset(data, "additions_with_carry.txt")
+        self._save_dataset(data, "with_carry_additions.txt")
         return data
 
     def generate_problem_size_datasets(self) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]]]:
@@ -56,13 +56,13 @@ class ArithmeticDatasetGenerator:
             (a, b) for a in range(100) for b in range(100)
             if a + b < 40
         ]
-        self._save_dataset(small_problems, "small_sum_additions.txt")
+        self._save_dataset(small_problems, "small_additions.txt")
 
         large_problems = [
             (a, b) for a in range(100) for b in range(100)
             if 60 < a + b < 100
         ]
-        self._save_dataset(large_problems, "large_sum_additions.txt")
+        self._save_dataset(large_problems, "large_additions.txt")
         
         return small_problems, large_problems
 

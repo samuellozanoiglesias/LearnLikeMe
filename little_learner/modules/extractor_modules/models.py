@@ -2,6 +2,22 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 
+class CarryModel(nn.Module):
+    @nn.compact
+    def __call__(self, x):
+        x = nn.relu(nn.Dense(16)(x)) 
+        x = nn.Dense(2)(x)             # raw logits
+        return x
+
+class UnitModel(nn.Module):
+    @nn.compact
+    def __call__(self, x):
+        x = nn.tanh(nn.Dense(32)(x))
+        x = nn.tanh(nn.Dense(16)(x))
+        x = nn.Dense(10)(x)  # logits
+        return x
+
+# -------------------- Legacy - LSTM Models -------------------
 class CarryLSTMModel(nn.Module):
     @nn.compact
     def __call__(self, x):
@@ -28,6 +44,6 @@ class UnitLSTMModel(nn.Module):
             carry1, x_t = lstm_1(carry1, x[:, t])
             carry2, x_t = lstm_2(carry2, x_t)
             carry3, x_t = lstm_3(carry3, x_t)
-        hidden_state = carry3[0]
+        hidden_state = carry2[0]
         final_output = nn.softmax(dense(hidden_state))
         return final_output

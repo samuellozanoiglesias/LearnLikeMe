@@ -1,7 +1,12 @@
+# USE: nohup python train_decision_module.py 0.01 WI 0.05 > logs_train_decision.out 2>&1 &
+import os
+os.environ["JAX_PLATFORM_NAME"] = "cpu"
+
 import jax
+#print(jax.devices())  # should only show CPU
+
 import jax.numpy as jnp
 import pandas as pd
-import os
 import sys
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -18,16 +23,15 @@ from little_learner.modules.decision_module.train_utils import (
 CLUSTER = "cuenca"  # Cuenca, Brigit or Local
 EPSILON = float(sys.argv[1])  # Noise factor for parameter initialization
 PARAM_TYPE = str(sys.argv[2]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+OMEGA = float(sys.argv[3])  # Omega value for loading pre-trained modules
 
 # --- Training Parameters ---
-OMEGA_UNIT = 0.05  # Omega value for loading pre-trained unit_extractor
-OMEGA_CARRY = 0.05  # Omega value for loading pre-trained carry_over_extractor
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.005
 EPOCHS = 10000
-BATCH_SIZE = 50
+BATCH_SIZE = 100
 FINISH_TOLERANCE = 0.0  # Tolerance for stopping training when accuracy reaches 1.0
 SHOW_EVERY_N_EPOCHS = 1
-CHECKPOINT_EVERY = 2000
+CHECKPOINT_EVERY = 500
 PARAMS_FILE = None  # Set to None to create new params, or provide a path to load existing params
 TRAINING_DISTRIBUTION_TYPE = "Decreasing_exponential"  # Use curriculum learning for training
 
@@ -35,10 +39,13 @@ TRAINING_DISTRIBUTION_TYPE = "Decreasing_exponential"  # Use curriculum learning
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""
+    CODE_DIR = "/home/samuel_lozano/LearnLikeMe"
 elif CLUSTER == "brigit":
     CLUSTER_DIR = "/mnt/lustre/home/samuloza"
+    CODE_DIR = f"{CLUSTER_DIR}/LearnLikeMe"
 elif CLUSTER == "local":
     CLUSTER_DIR = "D:/OneDrive - Universidad Complutense de Madrid (UCM)/Doctorado"
+    CODE_DIR = f"{CLUSTER_DIR}/LearnLikeMe"
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
@@ -46,7 +53,7 @@ RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module"
 SAVE_DIR = f"{RAW_DIR}/{PARAM_TYPE}/epsilon_{EPSILON:.2f}/Training_{timestamp}"
 PARAMS_DIR = f"{RAW_DIR}/initial_parameters"
 MODELS_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe"
-DATASET_DIR = f"datasets"
+DATASET_DIR = f"{CODE_DIR}/datasets"
 
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -54,12 +61,14 @@ os.makedirs(PARAMS_DIR, exist_ok=True)
 
 # --- Data Preparation ---
 # Load datasets and extractors
+all_pairs = load_dataset(os.path.join(DATASET_DIR, "all_valid_additions.txt"))
 train_pairs = load_dataset(os.path.join(DATASET_DIR, "train_pairs_not_in_stimuli.txt"))
 test_pairs = load_dataset(os.path.join(DATASET_DIR, "stimuli_test_pairs.txt"))
-carry_module = load_extractor_module(OMEGA_CARRY, MODELS_DIR, model_type='carry_over_extractor')
-unit_module = load_extractor_module(OMEGA_UNIT, MODELS_DIR, model_type='unit_extractor')
+carry_module, carry_dir = load_extractor_module(OMEGA, MODELS_DIR, model_type='carry_over_extractor')
+unit_module, unit_dir = load_extractor_module(OMEGA, MODELS_DIR, model_type='unit_extractor')
 
 # Generate initial test dataset
+x_val, y_val = generate_test_dataset(all_pairs)
 x_test, y_test = generate_test_dataset(test_pairs)
 
 # --- Save Config File ---
@@ -68,14 +77,15 @@ with open(config_path, "w") as f:
     f.write(f"Training ID: {timestamp}\n")
     f.write(f"Cluster Directory: {CLUSTER if CLUSTER else ''}\n")
     f.write(f"Module Name: decision_module\n")
-    f.write(f"Parameter type (Wise initialization or Random initialization): {PARAM_TYPE}\n")
-    f.write(f"Noise for initialization parameters: {EPSILON}\n")
+    f.write(f"Parameter Initialization Type (Wise initialization or Random initialization): {PARAM_TYPE}\n")
+    f.write(f"Noise Factor for Initialization Parameters (Epsilon): {EPSILON}\n")
     f.write(f"Learning Rate: {LEARNING_RATE}\n")
     f.write(f"Epochs: {EPOCHS}\n")
     f.write(f"Batch Size: {BATCH_SIZE}\n")
     f.write(f"Parameters File: {PARAMS_FILE if PARAMS_FILE else 'New parameters generated'}\n")
-    f.write(f"Weber fraction for Unit Extractor (Omega): {OMEGA_UNIT}\n")
-    f.write(f"Weber fraction for Carry Extractor (Omega): {OMEGA_CARRY}\n")
+    f.write(f"Weber fraction (Omega): {OMEGA}\n")
+    f.write(f"Unit Extractor imported: {unit_dir}\n")
+    f.write(f"Carry Extractor imported: {carry_dir}\n")
     f.write(f"Distribution used for the training set: {TRAINING_DISTRIBUTION_TYPE}\n")
     f.write(f"Finish Tolerance: {FINISH_TOLERANCE}\n")
     f.write(f"Show Every N Epochs: {SHOW_EVERY_N_EPOCHS}\n")
@@ -91,14 +101,38 @@ if PARAMS_FILE is not None:
 else:
     params = create_and_save_decision_params(PARAMS_DIR, epsilon=EPSILON, param_type=PARAM_TYPE, timestamp=timestamp)
 
-# --- Training Loop ---
+# --- Training Loop (prepare log and pre-training checkpoint 0) ---
 log_path = os.path.join(SAVE_DIR, "training_log.csv")
 first_write = True
+
+# Pre-training evaluation: save metrics and a checkpoint for epoch 0
+try:
+    pred_count, pred_count_test, loss = evaluate_module(
+        params, x_val, y_val, unit_module, carry_module, test_pairs
+    )
+    accuracy = pred_count / len(x_val) if len(x_val) > 0 else 0.0
+
+    # Write epoch 0 row to training log
+    pd.DataFrame([{
+        "epoch": 0,
+        "loss": float(loss),
+        "accuracy": float(accuracy),
+        "total_correct": pred_count,
+        "test_correct": pred_count_test
+    }]).to_csv(log_path, mode='a', index=False, header=first_write)
+    first_write = False
+
+    # Save checkpoint 0 (initial parameters)
+    save_results_and_module(None, accuracy, params, SAVE_DIR, checkpoint_number=0)
+    print(f"Saved pre-training checkpoint 0 in {SAVE_DIR}")
+except Exception as e:
+    print(f"Warning: pre-training evaluation or checkpoint save failed: {e}")
+
 threshold = Decimal('1.0') - Decimal(str(FINISH_TOLERANCE))
 
 for epoch in range(EPOCHS):
     # Generate training batch with curriculum learning
-    x_train, y_train = generate_train_dataset(train_pairs, BATCH_SIZE, distribution=TRAINING_DISTRIBUTION_TYPE)
+    x_train, y_train = generate_train_dataset(train_pairs, BATCH_SIZE, OMEGA, distribution=TRAINING_DISTRIBUTION_TYPE)
     
     # Update parameters
     params = update_params(params, x_train, y_train, unit_module, carry_module, LEARNING_RATE)
@@ -106,10 +140,10 @@ for epoch in range(EPOCHS):
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
         # Evaluate on test set
         pred_count, pred_count_test, loss = evaluate_module(
-            params, x_test, y_test, unit_module, carry_module, test_pairs
+            params, x_val, y_val, unit_module, carry_module, test_pairs
         )
         
-        accuracy = pred_count_test / len(test_pairs)
+        accuracy = pred_count / len(x_val)
         
         # Log results
         pd.DataFrame([{
@@ -121,8 +155,8 @@ for epoch in range(EPOCHS):
         }]).to_csv(log_path, mode='a', index=False, header=first_write)
         first_write = False
         
-        print(f"Epoch {epoch + 1}, Loss: {loss:.4f}, Accuracy: {accuracy:.4f}, "
-              f"Correct: {pred_count}/{len(x_test)}, Test Correct: {pred_count_test}/{len(test_pairs)}")
+        #print(f"Epoch {epoch + 1}, Loss: {loss:.4f}, Accuracy: {accuracy:.4f}, "
+        #      f"Correct: {pred_count}/{len(x_val)}, Test Correct: {pred_count_test}/{len(test_pairs)}")
         
     # Save periodic checkpoint
     if (epoch + 1) % CHECKPOINT_EVERY == 0:
@@ -131,19 +165,21 @@ for epoch in range(EPOCHS):
     # Early stopping check
     accuracy_dec = Decimal(str(accuracy)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     if accuracy_dec >= threshold:
-        print(f"Reached target accuracy of {threshold}! Stopping training.")
+        #print(f"Reached target accuracy of {threshold}! Stopping training.")
         break
 
 # --- Final Evaluation ---
+#print("Final evaluation on test set...")
 final_pred_count, final_pred_count_test, final_loss = evaluate_module(
-    params, x_test, y_test, unit_module, carry_module, test_pairs
+    params, x_val, y_val, unit_module, carry_module, test_pairs
 )
 final_accuracy = final_pred_count_test / len(test_pairs)
-print(f"\nTraining completed:")
-print(f"Final Loss: {final_loss:.4f}")
-print(f"Final Accuracy: {final_accuracy:.4f}")
-print(f"Total Correct: {final_pred_count}/{len(x_test)}")
-print(f"Test Set Correct: {final_pred_count_test}/{len(test_pairs)}")
+
+#print(f"\nTraining completed:")
+#print(f"Final Loss: {final_loss:.4f}")
+#print(f"Final Accuracy: {final_accuracy:.4f}")
+#print(f"Total Correct: {final_pred_count}/{len(all_pairs)}")
+#print(f"Test Set Correct: {final_pred_count_test}/{len(test_pairs)}")
 
 # --- Results Table ---
 # Get predictions for all test examples

@@ -76,30 +76,31 @@ def evaluate_module(params: dict, x_test: jnp.ndarray, y_test: jnp.ndarray,
     pred_tens, pred_units = decision_model(params, x_test, unit_module, carry_module)
     loss = compute_loss(params, x_test, y_test, unit_module, carry_module)
     
-    pred_count = 0
-    pred_count_test = 0
-    predictions = jnp.zeros(len(x_test))
+    # Reconstruct predictions and targets as integers
+    predictions = jnp.round(pred_tens) * 10 + jnp.round(pred_units)
+    predictions = predictions.astype(int)
+    targets = y_test[:,0] * 10 + y_test[:,1]
+
+    # Total correct predictions
+    pred_correct = predictions == targets
+    pred_count = int(jnp.sum(pred_correct))
     
-    for i in range(len(x_test)):
-        normalized_pred = [
-            int(jnp.round(pred_tens[i].item())),
-            int(jnp.round(pred_units[i].item()))
-        ]
-        prediction = normalized_pred[0] * 10 + normalized_pred[1]
-        predictions = predictions.at[i].set(prediction)
+    if test_pairs is not None:
+        test_pairs_arr = jnp.array(test_pairs)  # shape (n_pairs, 2)
+        a_inputs = x_test[:,0] * 10 + x_test[:,1]
+        b_inputs = x_test[:,2] * 10 + x_test[:,3]
+        inputs_stack = jnp.stack([a_inputs, b_inputs], axis=1)
         
-        # Get target value
-        target = y_test[i, 0] * 10 + y_test[i, 1]
-        
-        if prediction == target:
-            pred_count += 1
-            if test_pairs is not None and i < len(test_pairs):
-                pred_count_test += 1
+        # Vectorized comparison
+        matches = jnp.any(jnp.all(inputs_stack[:, None, :] == test_pairs_arr[None, :, :], axis=-1), axis=1)
+        pred_count_test = int(jnp.sum(pred_correct & matches))
+    else:
+        pred_count_test = pred_count
     
     if return_predictions:
-        return pred_count, pred_count_test, loss, predictions
-    return pred_count, pred_count_test, loss
-
+        return pred_count, pred_count_test, float(loss), predictions
+    else:
+        return pred_count, pred_count_test, float(loss)
 
 def save_trained_model(params: dict, filepath: str):
     """

@@ -1,4 +1,10 @@
+# USE: nohup python train_extractor_modules.py unit_extractor 0.05 > logs_train_extractor.out 2>&1 &
+import os
+os.environ["JAX_PLATFORM_NAME"] = "cpu"
+
 import jax
+print(jax.devices())  # should only show CPU
+
 import jax.numpy as jnp
 from jax import random
 import pandas as pd
@@ -7,33 +13,37 @@ import sys
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from little_learner.modules.extractor_modules.utils import (
+    load_dataset, generate_test_dataset,
     create_and_save_initial_params, load_initial_params, generate_unit_data, generate_carry_data, one_hot_encode, save_results_and_module
 )
-from little_learner.modules.extractor_modules.models import UnitLSTMModel, CarryLSTMModel
+from little_learner.modules.extractor_modules.models import UnitModel, CarryModel
 from little_learner.modules.extractor_modules.train_utils import (
     load_train_state, evaluate, train_step, get_predictions, compute_loss
 )
 
 # --- Config ---
 CLUSTER = "cuenca" # Cuenca, Brigit or Local
-MODULE_NAME = sys.argv[1]  # unit_extractor or carry_over_extractor
-TRAINING_DATA_TYPE = "gaussian" # gaussian (not exact numbers) or default (exact numbers)
+MODULE_NAME = sys.argv[1].lower()  # unit_extractor or carry_over_extractor
+OMEGA = float(sys.argv[2])  # Weber fraction (~0.2) for gaussian noise, if applicable
 
 # --- Training Parameters ---
-LEARNING_RATE = 0.1
+LEARNING_RATE = 0.005
 PARAMS_FILE = None  # Set to None to create new params, or provide a path to load existing params
-OMEGA = float(sys.argv[2])  # Weber fraction (~0.2) for gaussian noise, if applicable
 
 # --- Paths ---
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""
+    CODE_DIR = "/home/samuel_lozano/LearnLikeMe"
 elif CLUSTER == "brigit":
     CLUSTER_DIR = "/mnt/lustre/home/samuloza"
+    CODE_DIR = f"{CLUSTER_DIR}/LearnLikeMe"
 elif CLUSTER == "local":
     CLUSTER_DIR = "D:/OneDrive - Universidad Complutense de Madrid (UCM)/Doctorado"
+    CODE_DIR = f"{CLUSTER_DIR}/LearnLikeMe"
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
+
 RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}" 
 SAVE_DIR = f"{RAW_DIR}/Training_{timestamp}"
 PARAMS_DIR = f"{RAW_DIR}/initial_parameters"
@@ -43,39 +53,40 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(PARAMS_DIR, exist_ok=True)
 
 # --- Data Preparation ---
+DATASET_DIR = f"{CODE_DIR}/datasets"
+single_digit_pairs = load_dataset(os.path.join(DATASET_DIR, "single_digit_additions.txt"))
+x_val, y_val = generate_test_dataset(single_digit_pairs, MODULE_NAME)
+
 if MODULE_NAME == "carry_over_extractor":
-    x, y = generate_carry_data(training_data_type=TRAINING_DATA_TYPE, omega=OMEGA)
+    x, y = generate_carry_data(omega=OMEGA)
     y_one_hot = one_hot_encode(y, num_classes=2)
-    model = CarryLSTMModel()
-    FINISH_TOLERANCE = 0.01  # Tolerance for stopping training when accuracy reaches 1.0
-    EPOCHS = 2000  # Carry model uses 2000 epochs
-    BATCH_SIZE = 10  # Carry model uses batch size of 10
-    SHOW_EVERY_N_EPOCHS = 10  # Show accuracy every 10 epochs
-    CHECKPOINT_EVERY = 500  # Save checkpoint every 500 epochs
+    y_val = one_hot_encode(y_val, num_classes=2)
+    model = CarryModel()
+    FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
+    EPOCHS = 100  # Carry model uses 2000 epochs
+    BATCH_SIZE = 1  # Carry model uses batch size of 1
+    SHOW_EVERY_N_EPOCHS = 1  # Show accuracy every 1 epochs
+    CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs
 
 elif MODULE_NAME == "unit_extractor":
-    x, y = generate_unit_data(training_data_type=TRAINING_DATA_TYPE, omega=OMEGA)
+    x, y = generate_unit_data(omega=OMEGA)
     y_one_hot = one_hot_encode(y, num_classes=10)
-    model = UnitLSTMModel()
-    FINISH_TOLERANCE = 0.1  # Tolerance for stopping training when accuracy reaches 1.0
-    EPOCHS = 1000000  # Unit model uses 1000000 epochs
-    BATCH_SIZE = 100  # Unit model uses batch size of 100
-    SHOW_EVERY_N_EPOCHS = 1000  # Show accuracy every 1000 epochs
-    CHECKPOINT_EVERY = 100000 # Save checkpoint every 100000 epochs
+    y_val = one_hot_encode(y_val, num_classes=10)
+    model = UnitModel()
+    FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
+    EPOCHS = 1000  # Unit model uses 1000 epochs
+    BATCH_SIZE = 1  # Unit model uses batch size of 1
+    SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
+    CHECKPOINT_EVERY = 50  # Save checkpoint every 50 epochs
 
 else:
     raise ValueError("Invalid module name. Choose 'carry_over_extractor' or 'unit_extractor'.")
 
-if TRAINING_DATA_TYPE == "default":
-    FINISH_TOLERANCE = 0.0  # No tolerance for exact numbers
-
 x = jnp.array(x, dtype=jnp.float32)
 y_one_hot = jnp.array(y_one_hot, dtype=jnp.float32)
 
-x_train = x[:, None, :]
-x_val   = x[:, None, :]
+x_train = x
 y_train = y_one_hot
-y_val   = y_one_hot
 
 # --- Save Config File ---
 config_path = os.path.join(SAVE_DIR, "config.txt")
@@ -83,7 +94,6 @@ with open(config_path, "w") as f:
     f.write(f"Training ID: {timestamp}\n")
     f.write(f"Cluster Directory: {CLUSTER if CLUSTER else ''}\n")
     f.write(f"Module Name: {MODULE_NAME}\n")
-    f.write(f"Training Data Type: {TRAINING_DATA_TYPE}\n")
     f.write(f"Learning Rate: {LEARNING_RATE}\n")
     f.write(f"Epochs: {EPOCHS}\n")
     f.write(f"Batch Size: {BATCH_SIZE}\n")
@@ -103,8 +113,8 @@ if PARAMS_FILE is not None:
     initial_params = load_initial_params(PARAMS_FILE)
 else:
     PARAMS_FILE = os.path.join(PARAMS_DIR, f"initial_params_{timestamp}.json")
-    rng = random.PRNGKey(10)
-    input_shape = (1, x_train.shape[1], x_train.shape[2])  # (batch_size, sequence_length, features)
+    rng = random.PRNGKey(42)
+    input_shape = (1, x_train.shape[1])  # (batch_size, sequence_length, features)
     initial_params = create_and_save_initial_params(model, rng, input_shape, PARAMS_FILE)
 
 state = load_train_state(model, LEARNING_RATE, initial_params)
@@ -118,7 +128,8 @@ for epoch in range(EPOCHS):
     for i in range(0, len(x_train), BATCH_SIZE):
         x_batch = x_train[i:i + BATCH_SIZE]
         y_batch = y_train[i:i + BATCH_SIZE]
-        state = train_step(model, state, x_batch, y_batch)
+        state, grads = train_step(model, state, x_batch, y_batch)
+        #print("Epoch", epoch, "some grad example:", jnp.mean(grads['Dense_0']['kernel']))
 
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
         accuracy = evaluate(model, state.params, x_val, y_val)
@@ -150,10 +161,9 @@ print(f"Final accuracy: {final_accuracy:.4f}")
 preds, true_labels = get_predictions(model, state, x_val, y_val)
 results = []
 for i in range(len(x_val)):
-    x1 = x_val[i, 0, 0].item()
-    x2 = x_val[i, 0, 1].item()
-    y_true = true_labels[i].item()
-    y_pred = preds[i].item()
+    x1, x2 = x_val[i]
+    y_true = int(true_labels[i])
+    y_pred = int(preds[i])
     results.append({"x1": x1, "x2": x2, "y (real)": y_true, "pred": y_pred})
 df_results = pd.DataFrame(results)
 print(df_results)

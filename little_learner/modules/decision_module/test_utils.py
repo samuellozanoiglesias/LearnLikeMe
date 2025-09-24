@@ -29,16 +29,14 @@ def parse_config(path: str) -> dict:
                 cfg["training_id"] = line.split(":")[1].strip()
             elif line.lower().startswith("epochs"):
                 cfg["epochs"] = int(line.split(":")[1].strip())
-            elif line.lower().startswith("batch_size"):
+            elif line.lower().startswith("batch size"):
                 cfg["batch_size"] = int(line.split(":")[1].strip())
-            elif "Omega Unit" in line:
-                cfg["omega_unit"] = float(line.split(":")[1].strip())
-            elif "Omega Carry" in line:
-                cfg["omega_carry"] = float(line.split(":")[1].strip())
+            elif line.lower().startswith("weber fraction") or line.lower().startswith("omega"):
+                cfg["omega"] = float(line.split(":")[1].strip())
     return cfg
 
 def predictions(decision_module: dict, unit_module: dict, carry_module: dict, 
-                x_test: jnp.ndarray, y_test: jnp.ndarray, CLUSTER_DIR: str):
+                x_test: jnp.ndarray, y_test: jnp.ndarray, CODE_DIR: str):
     """
     Evaluate model performance.
     
@@ -49,7 +47,7 @@ def predictions(decision_module: dict, unit_module: dict, carry_module: dict,
         carry_module : Parameters of the carry detector.
         x_test : Test inputs shape (N, 4) where each row encodes two 2‑digit numbers.
         y_test : Test targets shape (N, 2) with the predicted tens / units.
-        CLUSTER_DIR : Base directory containing the datasets.
+        CODE_DIR : Base directory containing the datasets.
 
     Returns
     -------
@@ -61,17 +59,17 @@ def predictions(decision_module: dict, unit_module: dict, carry_module: dict,
     pred_tens, pred_units = decision_model(decision_module, x_test, unit_module, carry_module)
 
     # Load datasets and extractors
-    DATASET_DIR = f"{CLUSTER_DIR}/LearnLikeMe/datasets"
+    DATASET_DIR = f"{CODE_DIR}/datasets"
     test_pairs = load_dataset(os.path.join(DATASET_DIR, "stimuli_test_pairs.txt"))
-    carry = load_dataset(os.path.join(DATASET_DIR, "additions_carry.txt"))
-    small_sums = load_dataset(os.path.join(DATASET_DIR, "small_sum_additions.txt"))
-    large_sums = load_dataset(os.path.join(DATASET_DIR, "large_sum_additions.txt"))
+    carry = load_dataset(os.path.join(DATASET_DIR, "with_carry_additions.txt"))
+    small = load_dataset(os.path.join(DATASET_DIR, "small_additions.txt"))
+    large = load_dataset(os.path.join(DATASET_DIR, "large_additions.txt"))
 
     # Helper sets for fast membership tests
     test_set = set(test_pairs)
     carry_set = set(carry)
-    small_set = set(small_sums)
-    large_set = set(large_sums)
+    small_set = set(small)
+    large_set = set(large)
 
     c = {
         "pred_count": 0,
@@ -149,67 +147,39 @@ def predictions(decision_module: dict, unit_module: dict, carry_module: dict,
         "total_test_large": len(test_set & large_set),
         "total_carry_small": len(carry_set & small_set),
         "total_carry_large": len(carry_set & large_set),
+        "total_test_carry_small": len(test_set & carry_set & small_set),
+        "total_test_carry_large": len(test_set & carry_set & large_set),
     }
 
-    # Build a Pandas DataFrame
-    data = {
-        "Metric": [
-            "Overall Correct",
-            "Test Pairs Correct",
-            "Carry Correct",
-            "Test Pairs Carry Correct",
-            "Small Sum Correct",
-            "Test Pairs Small Sum Correct",
-            "Carry Small Sum Correct",
-            "Test Pairs Carry Small Sum Correct",
-            "Large Sum Correct",
-            "Test Pairs Large Sum Correct",
-            "Carry Large Sum Correct",
-            "Test Pairs Carry Large Sum Correct",
-        ],
-        "Count": [
-            c["pred_count"],
-            c["pred_count_test"],
-            c["pred_count_carry"],
-            c["pred_count_test_carry"],
-            c["pred_count_small"],
-            c["pred_count_test_small"],
-            c["pred_count_carry_small"],
-            c["pred_count_test_carry_small"],
-            c["pred_count_large"],
-            c["pred_count_test_large"],
-            c["pred_count_carry_large"],
-            c["pred_count_test_carry_large"],
-        ],
-        "Total": [
-            totals["total_examples"],
-            totals["total_test"],
-            totals["total_carry"],
-            totals["total_test_carry"],
-            totals["total_small"],
-            totals["total_test_small"],
-            totals["total_carry_small"],
-            totals["total_test_carry_small"],
-            totals["total_large"],
-            totals["total_test_large"],
-            totals["total_carry_large"],
-            totals["total_test_carry_large"],
-        ],
-        "Accuracy (%)": [
-            round(100 * c["pred_count"] / totals["total_examples"], 2),
-            round(100 * c["pred_count_test"] / totals["total_test"], 2) if totals["total_test"] else None,
-            round(100 * c["pred_count_carry"] / totals["total_carry"], 2) if totals["total_carry"] else None,
-            round(100 * c["pred_count_test_carry"] / totals["total_test_carry"], 2) if totals["total_test_carry"] else None,
-            round(100 * c["pred_count_small"] / totals["total_small"], 2) if totals["total_small"] else None,
-            round(100 * c["pred_count_test_small"] / totals["total_test_small"], 2) if totals["total_test_small"] else None,
-            round(100 * c["pred_count_carry_small"] / totals["total_carry_small"], 2) if totals["total_carry_small"] else None,
-            round(100 * c["pred_count_test_carry_small"] / totals["total_test_carry_small"], 2) if totals["total_test_carry_small"] else None,
-            round(100 * c["pred_count_large"] / totals["total_large"], 2) if totals["total_large"] else None,
-            round(100 * c["pred_count_test_large"] / totals["total_test_large"], 2) if totals["total_test_large"] else None,
-            round(100 * c["pred_count_carry_large"] / totals["total_carry_large"], 2) if totals["total_carry_large"] else None,
-            round(100 * c["pred_count_test_carry_large"] / totals["total_test_carry_large"], 2) if totals["total_test_carry_large"] else None,
-        ],
-    }
+    # Build a single-row wide Pandas DataFrame: for each metric we create three
+    # columns: <slug>_count, <slug>_total, <slug>_accuracy. This makes appending
+    # results from different runs/checkpoints straightforward.
+    metrics = [
+        ("total", c["pred_count"], totals["total_examples"]),
+        ("test_pairs", c["pred_count_test"], totals["total_test"]),
+        ("carry", c["pred_count_carry"], totals["total_carry"]),
+        ("test_pairs_carry", c["pred_count_test_carry"], totals["total_test_carry"]),
+        ("small", c["pred_count_small"], totals["total_small"]),
+        ("test_pairs_small", c["pred_count_test_small"], totals["total_test_small"]),
+        ("carry_small", c["pred_count_carry_small"], totals["total_carry_small"]),
+        ("test_pairs_carry_small", c["pred_count_test_carry_small"], totals["total_test_carry_small"]),
+        ("large", c["pred_count_large"], totals["total_large"]),
+        ("test_pairs_large", c["pred_count_test_large"], totals["total_test_large"]),
+        ("carry_large", c["pred_count_carry_large"], totals["total_carry_large"]),
+        ("test_pairs_carry_large", c["pred_count_test_carry_large"], totals["total_test_carry_large"]),
+    ]
 
-    df = pd.DataFrame(data)
+    row = {}
+    for slug, count_val, total_val in metrics:
+        # Compute accuracy as percent with 2 decimals when denominator > 0
+        if total_val:
+            acc = round(100 * count_val / total_val, 2)
+        else:
+            acc = None
+
+        row[f"{slug}_count"] = int(count_val)
+        row[f"{slug}_total"] = int(total_val)
+        row[f"{slug}_accuracy"] = acc
+
+    df = pd.DataFrame([row])
     return df

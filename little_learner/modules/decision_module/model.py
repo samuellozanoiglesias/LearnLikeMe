@@ -1,7 +1,7 @@
 """Model definition for the decision module."""
 
 import jax.numpy as jnp
-from ..extractor_modules.models import CarryLSTMModel, UnitLSTMModel
+from ..extractor_modules.models import CarryModel, UnitModel
 
 
 def decision_model(params: dict, x: jnp.ndarray, unit_module: dict, carry_module: dict) -> tuple:
@@ -24,12 +24,11 @@ def decision_model(params: dict, x: jnp.ndarray, unit_module: dict, carry_module
     for i in [0, 1]:  # Position of first number (tens/units)
         for j in [2, 3]:  # Position of second number (tens/units)
             # Prepare input for the position pair
-            units_inputs = jnp.array(x[:, [i, j]])
-            units_input = units_inputs[:, None, :]
+            units_input = jnp.array(x[:, [i, j]])
             
             # Get predictions from pre-trained models
-            unit_output = UnitLSTMModel().apply({'params': unit_module}, units_input)
-            carry_output = CarryLSTMModel().apply({'params': carry_module}, units_input)
+            unit_output = UnitModel().apply({'params': unit_module}, units_input)
+            carry_output = CarryModel().apply({'params': carry_module}, units_input)
             
             # Store predictions
             unit_val[f'{i}_{j}'] = jnp.argmax(unit_output, axis=-1)
