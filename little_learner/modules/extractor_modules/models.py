@@ -2,19 +2,36 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 
-class CarryModel(nn.Module):
+class ExtractorModel(nn.Module):
+    structure: list
+    output_dim: int
     @nn.compact
     def __call__(self, x):
-        x = nn.relu(nn.Dense(16)(x)) 
-        x = nn.Dense(2)(x)             # raw logits
+        for layer in self.structure:
+            x = nn.relu(nn.Dense(layer)(x))
+        x = nn.Dense(self.output_dim)(x)  # logits (0-9)
         return x
 
-class UnitModel(nn.Module):
+# --------------------- Feedforward Models -------------------
+class CarryModel(nn.Module):
+    hidden1: int = 16
+    output_dim: int = 2
     @nn.compact
     def __call__(self, x):
-        x = nn.tanh(nn.Dense(32)(x))
-        x = nn.tanh(nn.Dense(16)(x))
-        x = nn.Dense(10)(x)  # logits
+        x = nn.relu(nn.Dense(self.hidden1)(x))
+        x = nn.Dense(self.output_dim)(x)             # raw logits
+        return x
+
+
+class UnitModel(nn.Module):
+    hidden1: int = 256
+    hidden2: int = 128
+    output_dim: int = 10
+    @nn.compact
+    def __call__(self, x):
+        x = nn.relu(nn.Dense(self.hidden1)(x))    # ancha para absorber el ruido
+        x = nn.relu(nn.Dense(self.hidden2)(x))
+        x = nn.Dense(self.output_dim)(x)     # logits (0-9)
         return x
 
 # -------------------- Legacy - LSTM Models -------------------

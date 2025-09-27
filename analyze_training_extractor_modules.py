@@ -1,3 +1,5 @@
+# USE: nohup python analyze_training_extractor_modules.py unit_extractor > logs_analyze_training_extractor.out &
+
 import os
 import sys
 import pandas as pd
@@ -8,7 +10,7 @@ from sklearn.metrics import confusion_matrix
 
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit or Local
-MODULE_NAME = sys.argv[1]  # unit_extractor or carry_over_extractor
+MODULE_NAME = sys.argv[1]  # unit_extractor or carry_extractor
 
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""
@@ -119,6 +121,7 @@ def analyze_single_digit_modules(raw_dir):
         plt.savefig(os.path.join(figures_dir, "accuracy_last_epoch_vs_omega.png"))
         plt.close()
 
+
         # --- Plot 4: Accuracy vs. epoch per ω ---
         plt.figure(figsize=(30, 15))
         sns.lineplot(
@@ -131,6 +134,29 @@ def analyze_single_digit_modules(raw_dir):
         plt.legend(title="ω")
         plt.savefig(os.path.join(figures_dir, "accuracy_vs_epoch_by_omega.png"))
         plt.close()
+
+        # --- Plot 4b: Accuracy and Loss vs. epoch for each ω ---
+        for omega_val in sorted(combined_logs['omega'].unique()):
+            omega_logs = combined_logs[combined_logs['omega'] == omega_val]
+            if 'loss' not in omega_logs.columns:
+                continue
+            fig, ax1 = plt.subplots(figsize=(10, 6))
+            color_acc = 'tab:blue'
+            color_loss = 'tab:red'
+            ax1.set_xlabel('Epoch')
+            ax1.set_ylabel('Accuracy', color=color_acc)
+            ax1.plot(omega_logs['epoch'], omega_logs['accuracy'], color=color_acc, marker='o', label='Accuracy')
+            ax1.tick_params(axis='y', labelcolor=color_acc)
+
+            ax2 = ax1.twinx()
+            ax2.set_ylabel('Loss', color=color_loss)
+            ax2.plot(omega_logs['epoch'], omega_logs['loss'], color=color_loss, marker='x', label='Loss')
+            ax2.tick_params(axis='y', labelcolor=color_loss)
+
+            plt.title(f'Accuracy and Loss vs. Epoch (ω={omega_val})')
+            fig.tight_layout()
+            plt.savefig(os.path.join(figures_dir, f"accuracy_loss_vs_epoch_omega_{omega_val}.png"))
+            plt.close(fig)
 
         # --- Plot 5: Mean error distance vs. ω ---
         mean_error_dist = (
@@ -146,6 +172,29 @@ def analyze_single_digit_modules(raw_dir):
         plt.ylabel("Mean Error Distance")
         plt.savefig(os.path.join(figures_dir, "mean_error_distance_vs_omega.png"))
         plt.close()
+
+        # --- Plot 6: Histogram of error distance over all examples ---
+        # Aggregate error distances across all runs / examples and plot histogram
+        try:
+            # Make sure error_distance is integer-valued for binning
+            combined_df['error_distance'] = combined_df['error_distance'].astype(int)
+            max_dist = int(combined_df['error_distance'].max()) if not combined_df['error_distance'].empty else 0
+            # Create bin edges so integers are centered
+            bins = np.arange(0, max_dist + 2) - 0.5
+
+            plt.figure(figsize=(6, 4))
+            sns.histplot(data=combined_df, x='error_distance', bins=bins, discrete=True)
+            plt.title('Histogram of Error Distance (all examples)')
+            plt.xlabel('Error distance')
+            plt.ylabel('Count')
+            plt.savefig(os.path.join(figures_dir, 'error_distance_histogram_all_examples.png'))
+            plt.close()
+
+            overall_mean = combined_df['error_distance'].mean()
+            overall_median = combined_df['error_distance'].median()
+            print(f"Overall mean error distance: {overall_mean:.3f}, median: {overall_median}")
+        except Exception as e:
+            print(f"Could not create aggregated error-distance histogram: {e}")
 
     print(f"Saved figures in: {figures_dir}")
 

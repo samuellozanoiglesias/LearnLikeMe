@@ -10,7 +10,99 @@ from jax import random as jrandom
 import numpy as np
 from typing import List, Tuple
 
-def create_and_save_decision_params(
+# ------------------ Parameter Initialization -------------------
+
+
+def initialize_decision_params(
+    filepath: str, 
+    epsilon: float = 0.01,
+    param_type: str = 'RI',
+    model_type: str = 'argmax',
+    timestamp: str = None,
+    number_size: int = 2
+) -> dict:
+    """
+    Initialize and save decision network parameters.
+    
+    Args:
+        filepath: Directory where to save the parameters
+        epsilon: Noise factor for parameter initialization
+        param_type: Type of initialization ('WI' for wise initialization or 'RI' for random initialization)
+        model_type: Type of model ('argmax' or 'vector')
+        timestamp: Optional timestamp for the filename
+        number_size: Number of digits in each number (e.g., 2 for two-digit numbers)
+    Returns:
+        Dictionary containing decision network parameters
+    """
+    if model_type.lower() == 'argmax':
+        unit_dim = 1  # argmax output dimension for units
+        carry_dim = 1 # argmax output dimension for carry
+        fixed_value = 1 # fixed value for argmax correct params
+    elif model_type.lower() == 'vector':
+        unit_dim = 10 # vector output dimension for units (0-9)
+        carry_dim = 2 # vector output dimension for carry (0 or 1)
+        fixed_value = None # no fixed value for vector correct params
+    else:
+        raise ValueError("model_type must be either 'argmax' or 'vector'")
+
+    # Define feature size (for 4 pairs, each with unit/carry, e.g. 4*unit_dim + 4*carry_dim)
+    feature_size = number_size * 2 * (unit_dim + carry_dim) # number size * number_of_addends * (unit + carry) per pair of single-digits
+    params = {}
+
+    if param_type == 'WI':
+        for i in range(number_size + 1): # +1 for possible carry in the highest place
+            params[f'dense_{i}'] = np.zeros(feature_size)
+        
+        params = wise_initialization(params, number_size, unit_dim=unit_dim, carry_dim=carry_dim, fixed_value=fixed_value)
+        params = {key: value + np.random.randn(feature_size) * epsilon for key, value in params.items()}
+
+    elif param_type == 'RI':
+        # Random initialization
+        for i in range(number_size + 1): # +1 for possible carry in the highest place
+            params[f'dense_{i}'] = np.random.randn(feature_size) * epsilon
+    
+    else:
+        raise ValueError("param_type must be either 'WI' or 'RI'")
+    
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+
+    save_path = os.path.join(filepath, f"trainable_model_{param_type}_{epsilon}_{timestamp}.json")
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    with open(save_path, 'w') as f:
+        json.dump(params, f, indent=2, default=lambda x: x.tolist() if isinstance(x, (jnp.ndarray, np.ndarray)) else x)
+
+    return params
+
+def wise_initialization(params: dict, number_size: int, unit_dim: int, carry_dim: int, fixed_value: float) -> dict:
+    if fixed_value is not None:
+        # Wise initialization: set specific weights to 1
+        # How it works: (digit_pos in first number * 2 + digit_pos in second number) * (unit_dim + carry_dim) + possible carry values
+        for k in range(carry_dim):  # Iterate over all possible carry values
+            for i in range(number_size):
+                params[f'dense_{i}'][(i * number_size + i) * (unit_dim + carry_dim) + k] = fixed_value  # Carry from units to tens
+
+        # How it works: (digit_pos in first number * 2 + digit_pos in second number) * (unit_dim + carry_dim) + carry_dim + possible unit values
+        for j in range(unit_dim):  # Iterate over all possible unit values
+            for i in range(number_size):
+                params[f'dense_{i+1}'][(i * number_size + i) * (unit_dim + carry_dim) + carry_dim + j] = fixed_value  # Tens digits contribution
+    
+    else:
+        # Wise initialization: set specific weights to 1
+        # How it works: (digit_pos in first number * 2 + digit_pos in second number) * (unit_dim + carry_dim) + possible carry values
+        for k in range(carry_dim):  # Iterate over all possible carry values
+            for i in range(number_size):
+                params[f'dense_{i}'][(i * number_size + i) * (unit_dim + carry_dim) + k] = float(k)  # Carry from units to tens
+
+        # How it works: (digit_pos in first number * 2 + digit_pos in second number) * (unit_dim + carry_dim) + carry_dim + possible unit values
+        for j in range(unit_dim):  # Iterate over all possible unit values
+            for i in range(number_size):
+                params[f'dense_{i+1}'][(i * number_size + i) * (unit_dim + carry_dim) + carry_dim + j] = float(j)  # Tens digits contribution
+
+    return params
+
+def OLD_create_and_save_decision_params(
     filepath: str, 
     epsilon: float = 0.01,
     param_type: str = 'RI', # 'WI' for wise initialization and 'RI' for random initialization
@@ -65,7 +157,6 @@ def create_and_save_decision_params(
         
     return params
 
-
 def load_initial_params(filepath: str) -> dict:
     """
     Load and process saved model parameters.
@@ -96,32 +187,37 @@ def load_dataset(filepath: str) -> List[Tuple[int, int]]:
     with open(filepath, "r") as file:
         return eval(file.read())
 
-
-def generate_test_dataset(test_pairs: List[Tuple[int, int]]) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def generate_test_dataset(pairs: List[Tuple[int, int]], number_size: int=None) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Generate test dataset from number pairs."""
     x_data = []
     y_data = []
-    
-    for a, b in test_pairs:
-        # Split numbers into tens and units
-        a_dec = a // 10
-        a_unit = a % 10
-        b_dec = b // 10
-        b_unit = b % 10
 
-        x_data.append([a_dec, a_unit, b_dec, b_unit])
+    if number_size is None:
+        max_number = max(max(a, b) for a, b in pairs)
+        number_size = len(str(max_number))
 
-        # Calculate target outputs
-        sum_units = (a_unit + b_unit) % 10
-        carry_units = 1 if (a_unit + b_unit) >= 10 else 0
-        sum_dec = (a_dec + b_dec + carry_units) % 10
-        y_data.append([sum_dec, sum_units])
-    
+    for a, b in pairs:
+        x1 = jnp.zeros(number_size, dtype=int)
+        x2 = jnp.zeros(number_size, dtype=int)
+        y = jnp.zeros(number_size + 1, dtype=int)
+        # i want to recurrently get the units, tens, hundreds, etc of each number
+        if a >= 10**number_size or b >= 10**number_size:
+            raise ValueError(f"Numbers {a} or {b} exceed the specified number_size of {number_size} digits.")
+        if a < 0 or b < 0:
+            raise ValueError(f"Numbers {a} or {b} are negative, which is not supported.")
+        
+        for i in range(number_size):
+            x1 = x1.at[number_size - 1 - i].set((a // (10 ** i)) % 10)
+            x2 = x2.at[number_size - 1 - i].set((b // (10 ** i)) % 10)
+            y = y.at[number_size - i].set((a + b) // (10 ** i) % 10)
+
+        x_data.append(jnp.concatenate([x1, x2]))
+        y_data.append(y)
+
     return jnp.array(x_data), jnp.array(y_data)
 
-
 def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int, omega: float, distribution: str,
-                           seed: int = 0) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                           number_size: int=None, seed: int = 0) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Generate training dataset with optional curriculum learning.
     
@@ -133,6 +229,10 @@ def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int, 
     Returns:
         Tuple (x_data, y_data) containing training inputs and target outputs
     """
+    if number_size is None:
+        max_number = max(max(a, b) for a, b in train_pairs)
+        number_size = len(str(max_number))
+
     if distribution == "Decreasing_exponential":
         # Use curriculum learning with probability-based sampling
         probabilities = decreasing_exponential(train_pairs)
@@ -140,34 +240,36 @@ def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int, 
         selected_pairs = [train_pairs[i] for i in selected_indices]
     else:
         # Use balanced sampling across problem difficulties
-        selected_pairs = generate_balanced_dataset(train_pairs, size_epoch)
+        selected_pairs = generate_balanced_dataset(train_pairs, size_epoch, number_size)
     
     x_data = []
     y_data = []
     
     for a, b in selected_pairs:
-        # Split numbers into tens and units
-        a_dec = a // 10
-        a_unit = a % 10
-        b_dec = b // 10
-        b_unit = b % 10
+        x1 = jnp.zeros(number_size, dtype=int)
+        x2 = jnp.zeros(number_size, dtype=int)
+        y = jnp.zeros(number_size + 1, dtype=int)
 
-        x_data.append([a_dec, a_unit, b_dec, b_unit])
+        if a >= 10**number_size or b >= 10**number_size:
+            raise ValueError(f"Numbers {a} or {b} exceed the specified number_size of {number_size} digits.")
+        if a < 0 or b < 0:
+            raise ValueError(f"Numbers {a} or {b} are negative, which is not supported.")
         
+        for i in range(number_size):
+            x1 = x1.at[number_size - 1 - i].set((a // (10 ** i)) % 10)
+            x2 = x2.at[number_size - 1 - i].set((b // (10 ** i)) % 10)
+            y = y.at[number_size - i].set((a + b) // (10 ** i) % 10)
+        
+        x_data.append(jnp.concatenate([x1, x2]))
+        y_data.append(y)
 
-        # Calculate target outputs
-        sum_units = (a_unit + b_unit) % 10
-        carry_units = 1 if (a_unit + b_unit) >= 10 else 0
-        sum_dec = (a_dec + b_dec + carry_units) % 10
-        y_data.append([sum_dec, sum_units])
-    
     # Convert to JAX array
     x_data = jnp.array(x_data)
     y_data = jnp.array(y_data)
 
     # Generate samples from N(mean=x_data, std=omega*|x_data|)
     rng = jrandom.PRNGKey(seed)
-    std = omega * jnp.abs(x_data)
+    std = omega #* jnp.abs(x_data)
     x_data = x_data + jrandom.normal(rng, shape=x_data.shape) * std
 
     return x_data, y_data
@@ -179,7 +281,7 @@ def load_extractor_module(omega: float, modules_dir: str, model_type: str) -> Tu
     Args:
         omega: The omega value used for training
         modules_dir: Directory containing the pre-trained models
-        model_type: Type of model to load ('carry_over_extractor' or 'unit_extractor')
+        model_type: Type of model to load ('carry_extractor' or 'unit_extractor')
     """
     # Look for Training_* folders under modules_dir/model_type and read their config.txt
     model_base = os.path.join(modules_dir, model_type)
@@ -235,14 +337,36 @@ def load_extractor_module(omega: float, modules_dir: str, model_type: str) -> Tu
     if chosen_folder is None:
         raise FileNotFoundError(f"No trained extractor found for model_type={model_type} and omega={omega}")
 
+    # Read hidden layer sizes from config.txt
+    config_path = os.path.join(chosen_folder, "config.txt")
+    structure = None
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.lower().startswith("structure"):
+                    try:
+                        structure = line.split(":")[1].strip()
+                    except Exception:
+                        pass
+
+    # Fallback to defaults if not found
+    if model_type == "unit_extractor":
+        if structure is None:
+            structure = [256, 128]
+    elif model_type == "carry_extractor":
+        if structure is None:
+            structure = [16]
+
     model_path = os.path.join(chosen_folder, "trained_model.pkl")
     if not os.path.exists(model_path):
+        print(f"[WARN] trained_model.pkl not found in {chosen_folder}")
         raise FileNotFoundError(f"trained_model.pkl not found in {chosen_folder}")
 
     with open(model_path, "rb") as f:
         model = pickle.load(f)
 
-    return model, chosen_folder
+    return model, chosen_folder, structure
 
 def load_decision_module(model_dir: str, checkpoint: int = None) -> Tuple[dict, dict]:
     """
@@ -262,7 +386,7 @@ def load_decision_module(model_dir: str, checkpoint: int = None) -> Tuple[dict, 
 
     return model
 
-def decreasing_exponential(train_pairs: List[Tuple[int, int]], N: int = 100) -> np.ndarray:
+def decreasing_exponential(train_pairs: List[Tuple[int, int]]) -> np.ndarray:
     """    
     Args:
         train_pairs: List of number pairs to calculate probabilities for
@@ -271,11 +395,11 @@ def decreasing_exponential(train_pairs: List[Tuple[int, int]], N: int = 100) -> 
     Returns:
         Array of probabilities for each pair
     """
-    probabilities = np.array([np.exp(-(a + b) / N) for a, b in train_pairs])
+    probabilities = np.array([np.exp(-(a + b)) for a, b in train_pairs])
     return probabilities / probabilities.sum()
 
 
-def categorize_problems(train_pairs: List[Tuple[int, int]]) -> Tuple[List[Tuple[int, int]], ...]:
+def categorize_problems(train_pairs: List[Tuple[int, int]], number_size: int) -> Tuple[List[Tuple[int, int]], ...]:
     """
     Categorize problems into small, medium, and large based on their sum.
     
@@ -285,15 +409,15 @@ def categorize_problems(train_pairs: List[Tuple[int, int]]) -> Tuple[List[Tuple[
     Returns:
         Tuple (small_problems, medium_problems, large_problems)
     """
-    small = [pair for pair in train_pairs if (pair[0] + pair[1]) < 40]
-    medium = [pair for pair in train_pairs if 40 <= (pair[0] + pair[1]) <= 60]
-    large = [pair for pair in train_pairs if (pair[0] + pair[1]) > 60]
-    
+    small = [pair for pair in train_pairs if (pair[0] + pair[1]) < 4 * 10 ** (number_size - 1)]
+    medium = [pair for pair in train_pairs if 4 * 10 ** (number_size - 1) <= (pair[0] + pair[1]) <= 6 * 10 ** (number_size - 1)]
+    large = [pair for pair in train_pairs if (pair[0] + pair[1]) > 6 * 10 ** (number_size - 1)]
+
     return small, medium, large
 
 
 def generate_balanced_dataset(train_pairs: List[Tuple[int, int]], 
-                           size_epoch: int) -> List[Tuple[int, int]]:
+                           size_epoch: int, number_size: int) -> List[Tuple[int, int]]:
     """
     Generate a balanced dataset with equal representation of problem difficulties.
     
@@ -304,7 +428,7 @@ def generate_balanced_dataset(train_pairs: List[Tuple[int, int]],
     Returns:
         List of balanced training pairs
     """
-    small, medium, large = categorize_problems(train_pairs)
+    small, medium, large = categorize_problems(train_pairs, number_size)
     
     # Calculate balanced sample sizes
     total_classes = 3

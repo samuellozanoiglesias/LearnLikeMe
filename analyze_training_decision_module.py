@@ -1,4 +1,4 @@
-# USE: nohup python analyze_training_decision_module.py WI > logs_analysis_training_decision.out 2>&1 &
+# USE: nohup python analyze_training_decision_module.py WI argmax > logs_analysis_training_decision.out 2>&1 &
 
 import os
 import sys
@@ -12,6 +12,7 @@ from sklearn.metrics import confusion_matrix
 CLUSTER = "cuenca"  # Cuenca, Brigit or Local
 MODULE_NAME = "decision_module"
 PARAM_TYPE = str(sys.argv[1]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+MODEL_TYPE = str(sys.argv[2]).lower()  # 'argmax' or 'vector' version of the decision module
 
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""
@@ -22,7 +23,7 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}/{PARAM_TYPE}"
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}/{PARAM_TYPE}/{MODEL_TYPE}_version"
 
 def analyze_multidigit_module(raw_dir):
     figures_dir = os.path.join(raw_dir, "figures")
@@ -114,6 +115,42 @@ def analyze_multidigit_module(raw_dir):
             log_df["omega"] = omega
             log_df["param_init_type"] = param_init_type
             log_df["epsilon"] = epsilon
+            # add a run identifier so we can aggregate across runs
+            log_df["run"] = os.path.basename(run)
+            # --- Per-run: plot accuracies over epochs for the four test splits (if present) ---
+            figures_dir = os.path.join(raw_dir, "figures")
+            os.makedirs(figures_dir, exist_ok=True)
+
+            acc_cols = [
+                "test_pairs_no_carry_small_accuracy",
+                "test_pairs_no_carry_large_accuracy",
+                "test_pairs_carry_small_accuracy",
+                "test_pairs_carry_large_accuracy",
+            ]
+            acc_labels = [
+                "no_carry_small",
+                "no_carry_large",
+                "carry_small",
+                "carry_large",
+            ]
+            colors = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
+
+            if any(c in log_df.columns for c in acc_cols):
+                safe_omega = str(omega).replace('.', '_') if omega is not None else 'None'
+                safe_epsilon = str(epsilon).replace('.', '_') if epsilon is not None else 'None'
+                plt.figure(figsize=(10, 6))
+                for col, lbl, colcol in zip(acc_cols, acc_labels, colors):
+                    if col in log_df.columns:
+                        plt.plot(log_df['epoch'], log_df[col], label=lbl, color=colcol)
+                plt.title(f"Accuracies over epochs - param={param_init_type}, ω={omega}, ε={epsilon}")
+                plt.xlabel('epoch')
+                plt.ylabel('accuracy')
+                plt.ylim(-5, 105)
+                plt.legend(loc='best')
+                plt.grid(alpha=0.3)
+                plt.savefig(os.path.join(figures_dir, f"accuracies_epochs_param_{param_init_type}_omega_{safe_omega}_eps_{safe_epsilon}.png"))
+                plt.close()
+
             all_logs.append(log_df)
 
         else:
@@ -123,7 +160,7 @@ def analyze_multidigit_module(raw_dir):
     # --- Aggregated analysis ---
     if all_results:
         combined_df = pd.concat(all_results, ignore_index=True)
-        combined_results_path = os.path.join(figures_dir, "combined_results.csv")
+        combined_results_path = os.path.join(raw_dir, "combined_results.csv")
         combined_df.to_csv(combined_results_path, index=False)
         print(f"Combined results saved to: {combined_results_path}")
         # --- Aggregated normalized error-distance plots ---
@@ -235,9 +272,136 @@ def analyze_multidigit_module(raw_dir):
 
     if all_logs:
         combined_logs = pd.concat(all_logs, ignore_index=True)
-        combined_logs_path = os.path.join(figures_dir, "combined_logs.csv")
+        combined_logs_path = os.path.join(raw_dir, "combined_logs.csv")
         combined_logs.to_csv(combined_logs_path, index=False)
         print(f"Combined logs saved to: {combined_logs_path}")
+        # --- Aggregated epoch plots for the four requested test accuracy columns ---
+        acc_cols = [
+            "test_pairs_no_carry_small_accuracy",
+            "test_pairs_no_carry_large_accuracy",
+            "test_pairs_carry_small_accuracy",
+            "test_pairs_carry_large_accuracy",
+        ]
+        acc_labels = ["no_carry_small", "no_carry_large", "carry_small", "carry_large"]
+        colors = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
+
+        def plot_mean_std(pivot_df, title, fname):
+            plt.figure(figsize=(10, 6))
+            for col, lbl, colcol in zip(acc_cols, acc_labels, colors):
+                if col not in pivot_df:
+                    continue
+                mean = pivot_df[col].mean(axis=1)
+                std = pivot_df[col].std(axis=1).fillna(0)
+                plt.plot(mean.index, mean.values, label=lbl, color=colcol)
+                plt.fill_between(mean.index, (mean - std).values, (mean + std).values, color=colcol, alpha=0.2)
+            plt.title(title)
+            plt.xlabel('epoch')
+            plt.ylabel('accuracy')
+            plt.ylim(0, 1)
+            plt.legend(loc='best')
+            plt.grid(alpha=0.3)
+            plt.savefig(fname)
+            plt.close()
+
+        # Helper to plot a mapping of acc_col -> DataFrame(runs as columns, index=epoch)
+        def plot_pivot_wrapper(pw, title, fname, subplot=False):
+            plt.figure(figsize=(10, 6))
+            for col, lbl, colcol in zip(acc_cols, acc_labels, colors):
+                if col not in pw:
+                    continue
+                df_runs = pw[col]
+                if df_runs is None or df_runs.empty:
+                    continue
+                mean = df_runs.mean(axis=1)
+                std = df_runs.std(axis=1).fillna(0)
+                plt.plot(mean.index, mean.values, label=lbl, color=colcol)
+                plt.fill_between(mean.index, (mean - std).values, (mean + std).values, color=colcol, alpha=0.2)
+            plt.title(title)
+            plt.xlabel('epoch')
+            plt.ylabel('accuracy')
+            plt.ylim(-5, 105)
+            if subplot == True:
+                plt.xlim(0, 400)
+            plt.legend(loc='best')
+            plt.grid(alpha=0.3)
+            plt.savefig(fname)
+            plt.close()
+
+        # Work per param_init_type to match other plots grouping
+        for param_type in combined_logs['param_init_type'].dropna().unique():
+            subset_param = combined_logs[combined_logs['param_init_type'] == param_type]
+            if subset_param.empty:
+                continue
+
+            # 1) Per (omega, epsilon) pair
+            pairs = subset_param[['omega', 'epsilon']].drop_duplicates().values.tolist()
+            for om, eps in pairs:
+                sub = subset_param[(subset_param['omega'] == om) & (subset_param['epsilon'] == eps)]
+                if sub.empty:
+                    continue
+                # build pivot per acc col: produce a DataFrame with MultiIndex epoch and columns per acc col where each column is a DataFrame of runs
+                # We'll create a dict of DataFrames for each acc col where columns are run ids
+                pivot_per_acc = {}
+                for col in acc_cols:
+                    if col in sub.columns:
+                        p = sub.pivot_table(index='epoch', columns='run', values=col)
+                        pivot_per_acc[col] = p
+                # merge pivots into a single DataFrame with hierarchical columns by acc col
+                if not pivot_per_acc:
+                    continue
+                # For plotting convenience, create a DataFrame where each acc col is a sub-DataFrame accessed in plot_mean_std
+                # We'll pass a dict-like object; simpler is to create a DataFrame where columns are acc col names mapping to DataFrames
+                # Instead, create a simple container: a DataFrame-like mapping via pandas Panel isn't available; instead, create a concat with keys
+                concat = {}
+                for col, dfp in pivot_per_acc.items():
+                    # reindex epoch to full range
+                    concat[col] = dfp
+
+                safe_om = str(om).replace('.', '_') if om is not None else 'None'
+                safe_eps = str(eps).replace('.', '_') if eps is not None else 'None'
+                fname = os.path.join(figures_dir, f"accuracies_epochs_agg_param_{param_type}_omega_{safe_om}_eps_{safe_eps}.png")
+                plot_pivot_wrapper(concat, f"Accuracies over epochs (mean ± std) - param={param_type}, ω={om}, ε={eps}", fname)
+
+            # 2) Per omega aggregated across epsilons
+            for om in sorted(subset_param['omega'].dropna().unique()):
+                sub = subset_param[subset_param['omega'] == om]
+                if sub.empty:
+                    continue
+                pw = {}
+                for col in acc_cols:
+                    if col in sub.columns:
+                        pw[col] = sub.pivot_table(index='epoch', columns='run', values=col)
+                if not pw:
+                    continue
+                fname = os.path.join(figures_dir, f"accuracies_epochs_agg_param_{param_type}_omega_{str(om).replace('.','_')}_all_eps.png")
+                plot_pivot_wrapper(pw, f"Accuracies over epochs (mean ± std) - param={param_type}, ω={om} (all ε)", fname)
+
+            # 3) Per epsilon aggregated across omegas
+            for eps in sorted(subset_param['epsilon'].dropna().unique()):
+                sub = subset_param[subset_param['epsilon'] == eps]
+                if sub.empty:
+                    continue
+                pw = {}
+                for col in acc_cols:
+                    if col in sub.columns:
+                        pw[col] = sub.pivot_table(index='epoch', columns='run', values=col)
+                if not pw:
+                    continue
+                fname = os.path.join(figures_dir, f"accuracies_epochs_agg_param_{param_type}_eps_{str(eps).replace('.','_')}_all_omegas.png")
+                plot_pivot_wrapper(pw, f"Accuracies over epochs (mean ± std) - param={param_type}, ε={eps} (all ω)", fname)
+
+            # 4) Overall aggregated across all omegas and epsilons for this param_type
+            sub = subset_param
+            pw = {}
+            for col in acc_cols:
+                if col in sub.columns:
+                    pw[col] = sub.pivot_table(index='epoch', columns='run', values=col)
+            if pw:
+                fname = os.path.join(figures_dir, f"accuracies_epochs_agg_param_{param_type}_all_pairs.png")
+                plot_pivot_wrapper(pw, f"Accuracies over epochs (mean ± std) - param={param_type} (all ω & ε)", fname)
+                fname_subplot = os.path.join(figures_dir, f"accuracies_epochs_agg_param_{param_type}_all_pairs_subplot.png")
+                plot_pivot_wrapper(pw, f"Accuracies over epochs (mean ± std) - param={param_type} (all ω & ε)", fname_subplot, subplot=True)
+            
         
         # --- Accuracy per (omega, param_init_type, epsilon) ---
         last_epoch_acc = (

@@ -1,4 +1,4 @@
-# USE: nohup python train_decision_module.py 0.01 WI 0.05 > logs_train_decision.out 2>&1 &
+# USE: nohup python train_decision_module.py 0.01 WI 0.05 argmax > logs_train_decision.out 2>&1 &
 import os
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
@@ -13,21 +13,23 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from little_learner.modules.decision_module.utils import (
     load_dataset, generate_train_dataset, generate_test_dataset,
-    save_results_and_module, load_extractor_module, create_and_save_decision_params, load_initial_params
+    save_results_and_module, load_extractor_module, initialize_decision_params, load_initial_params
 )
 from little_learner.modules.decision_module.train_utils import (
-    evaluate_module, update_params
+    evaluate_module, update_params, _make_hashable, _parse_structure
 )
+from little_learner.modules.decision_module.model import decision_model_argmax, decision_model_vector
 
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit or Local
 EPSILON = float(sys.argv[1])  # Noise factor for parameter initialization
 PARAM_TYPE = str(sys.argv[2]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
 OMEGA = float(sys.argv[3])  # Omega value for loading pre-trained modules
+MODEL_TYPE = str(sys.argv[4]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs
 
 # --- Training Parameters ---
 LEARNING_RATE = 0.005
-EPOCHS = 10000
+EPOCHS = 7250
 BATCH_SIZE = 100
 FINISH_TOLERANCE = 0.0  # Tolerance for stopping training when accuracy reaches 1.0
 SHOW_EVERY_N_EPOCHS = 1
@@ -49,10 +51,10 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module"
-SAVE_DIR = f"{RAW_DIR}/{PARAM_TYPE}/epsilon_{EPSILON:.2f}/Training_{timestamp}"
+MODULES_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe"
+RAW_DIR = f"{MODULES_DIR}/decision_module"
+SAVE_DIR = f"{RAW_DIR}/{PARAM_TYPE}/{MODEL_TYPE}_version/epsilon_{EPSILON:.2f}/Training_{timestamp}"
 PARAMS_DIR = f"{RAW_DIR}/initial_parameters"
-MODELS_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe"
 DATASET_DIR = f"{CODE_DIR}/datasets"
 
 os.makedirs(RAW_DIR, exist_ok=True)
@@ -64,12 +66,44 @@ os.makedirs(PARAMS_DIR, exist_ok=True)
 all_pairs = load_dataset(os.path.join(DATASET_DIR, "all_valid_additions.txt"))
 train_pairs = load_dataset(os.path.join(DATASET_DIR, "train_pairs_not_in_stimuli.txt"))
 test_pairs = load_dataset(os.path.join(DATASET_DIR, "stimuli_test_pairs.txt"))
-carry_module, carry_dir = load_extractor_module(OMEGA, MODELS_DIR, model_type='carry_over_extractor')
-unit_module, unit_dir = load_extractor_module(OMEGA, MODELS_DIR, model_type='unit_extractor')
+carry = load_dataset(os.path.join(DATASET_DIR, "carry_additions.txt"))
+small = load_dataset(os.path.join(DATASET_DIR, "small_additions.txt"))
+large = load_dataset(os.path.join(DATASET_DIR, "large_additions.txt"))
+
+test_set = set(test_pairs)
+carry_set = set(carry)
+small_set = set(small)
+large_set = set(large)
+
+totals = [0, 0, 0, 0, 0, 0]
+totals[4] = len(test_set & small_set)
+totals[5] = len(test_set & large_set)
+totals[2] = len(test_set & carry_set & small_set)
+totals[3] = len(test_set & carry_set & large_set)
+totals[0] = totals[4] - totals[2]
+totals[1] = totals[5] - totals[3]
+
+# For JAX static arguments, also create tuple versions
+carry_tuple = tuple(sorted(carry_set))
+small_tuple = tuple(sorted(small_set))
+large_tuple = tuple(sorted(large_set))
+
+carry_module, carry_dir, carry_structure = load_extractor_module(OMEGA, MODULES_DIR, model_type='carry_extractor')
+unit_module, unit_dir, unit_structure = load_extractor_module(OMEGA, MODULES_DIR, model_type='unit_extractor')
+
+carry_structure = _parse_structure(carry_structure)
+unit_structure = _parse_structure(unit_structure)
+
+carry_structure = _make_hashable(carry_structure)
+unit_structure = _make_hashable(unit_structure)
+
+# Search for number_size as the number of digits of the biggest number in all_pairs
+max_number = max(max(a, b) for a, b in all_pairs)
+number_size = len(str(max_number))
 
 # Generate initial test dataset
-x_val, y_val = generate_test_dataset(all_pairs)
-x_test, y_test = generate_test_dataset(test_pairs)
+x_val, y_val = generate_test_dataset(all_pairs, number_size=number_size)
+x_test, y_test = generate_test_dataset(test_pairs, number_size=number_size)
 
 # --- Save Config File ---
 config_path = os.path.join(SAVE_DIR, "config.txt")
@@ -99,7 +133,15 @@ if PARAMS_FILE is not None:
     PARAMS_FILE = os.path.join(PARAMS_DIR, PARAMS_FILE)
     params = load_initial_params(PARAMS_FILE)
 else:
-    params = create_and_save_decision_params(PARAMS_DIR, epsilon=EPSILON, param_type=PARAM_TYPE, timestamp=timestamp)
+    params = initialize_decision_params(PARAMS_DIR, epsilon=EPSILON, param_type=PARAM_TYPE, model_type=MODEL_TYPE, timestamp=timestamp, number_size=number_size)
+
+# Select model function
+if MODEL_TYPE == "vector":
+    model_fn = decision_model_vector
+elif MODEL_TYPE == "argmax":
+    model_fn = decision_model_argmax
+else:
+    raise ValueError("Invalid model type. Choose 'argmax' or 'vector'.")
 
 # --- Training Loop (prepare log and pre-training checkpoint 0) ---
 log_path = os.path.join(SAVE_DIR, "training_log.csv")
@@ -107,19 +149,33 @@ first_write = True
 
 # Pre-training evaluation: save metrics and a checkpoint for epoch 0
 try:
-    pred_count, pred_count_test, loss = evaluate_module(
-        params, x_val, y_val, unit_module, carry_module, test_pairs
+    pred_count, pred_count_test, loss, tests = evaluate_module(
+        params, x_val, y_val, unit_module, carry_module, test_pairs, model_fn=model_fn,
+        unit_structure=unit_structure, carry_structure=carry_structure,
+        carry_set=carry_tuple, small_set=small_tuple, large_set=large_tuple
     )
     accuracy = pred_count / len(x_val) if len(x_val) > 0 else 0.0
 
     # Write epoch 0 row to training log
     pd.DataFrame([{
-        "epoch": 0,
-        "loss": float(loss),
-        "accuracy": float(accuracy),
-        "total_correct": pred_count,
-        "test_correct": pred_count_test
-    }]).to_csv(log_path, mode='a', index=False, header=first_write)
+            "epoch": 0,
+            "loss": float(loss),
+            "accuracy": float(accuracy),
+            "total_correct": pred_count,
+            "test_correct": pred_count_test,
+            "test_pairs_no_carry_small_total": totals[0],
+            "test_pairs_no_carry_small_count": tests[0],
+            "test_pairs_no_carry_small_accuracy": 100 * (tests[0] / totals[0]) if totals[0] > 0 else None,
+            "test_pairs_no_carry_large_total": totals[1],
+            "test_pairs_no_carry_large_count": tests[1],
+            "test_pairs_no_carry_large_accuracy": 100 * (tests[1] / totals[1]) if totals[1] > 0 else None,
+            "test_pairs_carry_small_total": totals[2],
+            "test_pairs_carry_small_count": tests[2],
+            "test_pairs_carry_small_accuracy": 100 * (tests[2] / totals[2]) if totals[2] > 0 else None,
+            "test_pairs_carry_large_total": totals[3],
+            "test_pairs_carry_large_count": tests[3],
+            "test_pairs_carry_large_accuracy": 100 * (tests[3] / totals[3]) if totals[3] > 0 else None,
+        }]).to_csv(log_path, mode='a', index=False, header=first_write)
     first_write = False
 
     # Save checkpoint 0 (initial parameters)
@@ -133,31 +189,46 @@ threshold = Decimal('1.0') - Decimal(str(FINISH_TOLERANCE))
 for epoch in range(EPOCHS):
     # Generate training batch with curriculum learning
     x_train, y_train = generate_train_dataset(train_pairs, BATCH_SIZE, OMEGA, distribution=TRAINING_DISTRIBUTION_TYPE)
-    
+
     # Update parameters
-    params = update_params(params, x_train, y_train, unit_module, carry_module, LEARNING_RATE)
+    params = update_params(
+        params, x_train, y_train, unit_module, carry_module, LEARNING_RATE, model_fn=model_fn,
+        unit_structure=unit_structure, carry_structure=carry_structure
+    )
     
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
         # Evaluate on test set
-        pred_count, pred_count_test, loss = evaluate_module(
-            params, x_val, y_val, unit_module, carry_module, test_pairs
+        pred_count, pred_count_test, loss, tests = evaluate_module(
+            params, x_val, y_val, unit_module, carry_module, test_pairs, carry_set=carry_tuple, small_set=small_tuple, large_set=large_tuple, model_fn=model_fn,
+            unit_structure=unit_structure, carry_structure=carry_structure
         )
-        
-        accuracy = pred_count / len(x_val)
-        
+        accuracy = pred_count_test / len(test_pairs)
+
         # Log results
         pd.DataFrame([{
             "epoch": epoch + 1,
             "loss": float(loss),
             "accuracy": float(accuracy),
             "total_correct": pred_count,
-            "test_correct": pred_count_test
+            "test_correct": pred_count_test,
+            "test_pairs_no_carry_small_total": totals[0],
+            "test_pairs_no_carry_small_count": tests[0],
+            "test_pairs_no_carry_small_accuracy": 100 * (tests[0] / totals[0]) if totals[0] > 0 else None,
+            "test_pairs_no_carry_large_total": totals[1],
+            "test_pairs_no_carry_large_count": tests[1],
+            "test_pairs_no_carry_large_accuracy": 100 * (tests[1] / totals[1]) if totals[1] > 0 else None,
+            "test_pairs_carry_small_total": totals[2],
+            "test_pairs_carry_small_count": tests[2],
+            "test_pairs_carry_small_accuracy": 100 * (tests[2] / totals[2]) if totals[2] > 0 else None,
+            "test_pairs_carry_large_total": totals[3],
+            "test_pairs_carry_large_count": tests[3],
+            "test_pairs_carry_large_accuracy": 100 * (tests[3] / totals[3]) if totals[3] > 0 else None,
         }]).to_csv(log_path, mode='a', index=False, header=first_write)
         first_write = False
-        
+
         #print(f"Epoch {epoch + 1}, Loss: {loss:.4f}, Accuracy: {accuracy:.4f}, "
         #      f"Correct: {pred_count}/{len(x_val)}, Test Correct: {pred_count_test}/{len(test_pairs)}")
-        
+
     # Save periodic checkpoint
     if (epoch + 1) % CHECKPOINT_EVERY == 0:
         save_results_and_module(None, accuracy, params, SAVE_DIR, checkpoint_number=epoch + 1)
@@ -170,31 +241,22 @@ for epoch in range(EPOCHS):
 
 # --- Final Evaluation ---
 #print("Final evaluation on test set...")
-final_pred_count, final_pred_count_test, final_loss = evaluate_module(
-    params, x_val, y_val, unit_module, carry_module, test_pairs
+final_pred_count, final_pred_count_test, final_loss, final_preds, targets = evaluate_module(
+    params, x_test, y_test, unit_module, carry_module, test_pairs, model_fn=model_fn,
+    unit_structure=unit_structure, carry_structure=carry_structure,
+    return_predictions=True
 )
 final_accuracy = final_pred_count_test / len(test_pairs)
 
-#print(f"\nTraining completed:")
-#print(f"Final Loss: {final_loss:.4f}")
-#print(f"Final Accuracy: {final_accuracy:.4f}")
-#print(f"Total Correct: {final_pred_count}/{len(all_pairs)}")
-#print(f"Test Set Correct: {final_pred_count_test}/{len(test_pairs)}")
-
-# --- Results Table ---
-# Get predictions for all test examples
-pred_count, pred_count_test, loss, final_preds = evaluate_module(params, x_test, y_test, unit_module, carry_module, test_pairs, return_predictions=True)
 results = []
 for i in range(len(test_pairs)):
     x1, x2 = test_pairs[i]
-    y_true = y_test[i, 0] * 10 + y_test[i, 1]
-    y_pred = final_preds[i].item()
     results.append({
-        "x1": x1, 
-        "x2": x2, 
-        "y (true)": y_true, 
-        "y (pred)": y_pred,
-        "correct": y_pred == y_true
+        "x1": x1,
+        "x2": x2,
+        "y (true)": targets[i],
+        "y (pred)": final_preds[i],
+        "correct": final_preds[i] == targets[i]
     })
 df_results = pd.DataFrame(results)
 

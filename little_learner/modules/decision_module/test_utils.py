@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 
 from little_learner.modules.decision_module.utils import load_dataset
-from .model import decision_model
+from .model import decision_model_argmax, decision_model_vector
 
 # Helper: parse the config file
 def parse_config(path: str) -> dict:
@@ -36,7 +36,10 @@ def parse_config(path: str) -> dict:
     return cfg
 
 def predictions(decision_module: dict, unit_module: dict, carry_module: dict, 
-                x_test: jnp.ndarray, y_test: jnp.ndarray, CODE_DIR: str):
+                x_test: jnp.ndarray, y_test: jnp.ndarray, CODE_DIR: str, 
+                unit_hidden1: int=256, unit_hidden2: int=128, unit_output_dim: int=10,
+                carry_hidden1: int=16, carry_output_dim: int=2,
+                model_fn=decision_model_argmax):
     """
     Evaluate model performance.
     
@@ -56,12 +59,25 @@ def predictions(decision_module: dict, unit_module: dict, carry_module: dict,
         same DataFrame is written to `filepath` as CSV (index is omitted).
     """
 
-    pred_tens, pred_units = decision_model(decision_module, x_test, unit_module, carry_module)
+    pred_tens, pred_units = model_fn(decision_module, x_test, unit_module, carry_module, unit_hidden1, unit_hidden2, unit_output_dim, carry_hidden1, carry_output_dim)
+
+    # Convert outputs to class labels if they are vectors
+    if pred_tens.ndim > 1:
+        pred_tens_decoded = jnp.argmax(pred_tens, axis=1)
+    else:
+        pred_tens_decoded = jnp.round(pred_tens).astype(int)
+    if pred_units.ndim > 1:
+        pred_units_decoded = jnp.argmax(pred_units, axis=1)
+    else:
+        pred_units_decoded = jnp.round(pred_units).astype(int)
+
+    pred_tens = pred_tens_decoded
+    pred_units = pred_units_decoded
 
     # Load datasets and extractors
     DATASET_DIR = f"{CODE_DIR}/datasets"
     test_pairs = load_dataset(os.path.join(DATASET_DIR, "stimuli_test_pairs.txt"))
-    carry = load_dataset(os.path.join(DATASET_DIR, "with_carry_additions.txt"))
+    carry = load_dataset(os.path.join(DATASET_DIR, "carry_additions.txt"))
     small = load_dataset(os.path.join(DATASET_DIR, "small_additions.txt"))
     large = load_dataset(os.path.join(DATASET_DIR, "large_additions.txt"))
 
@@ -71,68 +87,64 @@ def predictions(decision_module: dict, unit_module: dict, carry_module: dict,
     small_set = set(small)
     large_set = set(large)
 
-    c = {
-        "pred_count": 0,
-        "pred_count_test": 0,
-        "pred_count_carry": 0,
-        "pred_count_test_carry": 0,
-        "pred_count_small": 0,
-        "pred_count_test_small": 0,
-        "pred_count_carry_small": 0,
-        "pred_count_test_carry_small": 0,
-        "pred_count_large": 0,
-        "pred_count_test_large": 0,
-        "pred_count_carry_large": 0,
-        "pred_count_test_carry_large": 0,
-    }
-    
     total_examples = x_test.shape[0]
-        
-    for i in range(total_examples):
-        # Round the predictions to integers
-        pred = [int(jnp.round(pred_tens[i].item())),
-                int(jnp.round(pred_units[i].item()))]
 
-        # Decode the two 2‑digit numbers from the input tensor
-        a = int(str(int(x_test[i, 0])) + str(int(x_test[i, 1])))
-        b = int(str(int(x_test[i, 2])) + str(int(x_test[i, 3])))
-        pair = (a, b)
+    # Vectorized decoding of pairs
+    a_arr = (x_test[:, 0].astype(int) * 10 + x_test[:, 1].astype(int)).tolist()
+    b_arr = (x_test[:, 2].astype(int) * 10 + x_test[:, 3].astype(int)).tolist()
+    pairs = list(zip(a_arr, b_arr))
 
-        if pred == [int(y_test[i, 0]), int(y_test[i, 1])]:
-            # 4.1  Global correct
-            c["pred_count"] += 1
+    # Vectorized predictions and targets
+    pred_arr = jnp.stack([pred_tens, pred_units], axis=1)
+    true_arr = y_test.astype(int)
+    correct_mask = (pred_arr == true_arr).all(axis=1)
 
-            # 4.2  In the test‑pairs list
-            if pair in test_set:
-                c["pred_count_test"] += 1
+    # Membership masks
+    test_mask = np.array([pair in test_set for pair in pairs])
+    carry_mask = np.array([pair in carry_set for pair in pairs])
+    small_mask = np.array([pair in small_set for pair in pairs])
+    large_mask = np.array([pair in large_set for pair in pairs])
 
-                # 4.2.1  Carry‑present among the test pairs
-                if pair in carry_set:
-                    c["pred_count_test_carry"] += 1
-                    if pair in small_set:
-                        c["pred_count_test_carry_small"] += 1
-                    elif pair in large_set:
-                        c["pred_count_test_carry_large"] += 1
+    # All correct
+    pred_count = int(np.sum(correct_mask))
 
-                # 4.2.2  Small / large classification
-                if pair in small_set:
-                    c["pred_count_test_small"] += 1
-                elif pair in large_set:
-                    c["pred_count_test_large"] += 1
+    # Correct & in test set
+    pred_count_test = int(np.sum(correct_mask & test_mask))
+    # Correct & carry
+    pred_count_carry = int(np.sum(correct_mask & carry_mask))
+    # Correct & test & carry
+    pred_count_test_carry = int(np.sum(correct_mask & test_mask & carry_mask))
+    # Correct & small
+    pred_count_small = int(np.sum(correct_mask & small_mask))
+    # Correct & test & small
+    pred_count_test_small = int(np.sum(correct_mask & test_mask & small_mask))
+    # Correct & carry & small
+    pred_count_carry_small = int(np.sum(correct_mask & carry_mask & small_mask))
+    # Correct & test & carry & small
+    pred_count_test_carry_small = int(np.sum(correct_mask & test_mask & carry_mask & small_mask))
+    # Correct & large
+    pred_count_large = int(np.sum(correct_mask & large_mask))
+    # Correct & test & large
+    pred_count_test_large = int(np.sum(correct_mask & test_mask & large_mask))
+    # Correct & carry & large
+    pred_count_carry_large = int(np.sum(correct_mask & carry_mask & large_mask))
+    # Correct & test & carry & large
+    pred_count_test_carry_large = int(np.sum(correct_mask & test_mask & carry_mask & large_mask))
 
-            # 4.3  Carry‑present (overall)
-            if pair in carry_set:
-                c["pred_count_carry"] += 1
-                if pair in small_set:
-                    c["pred_count_carry_small"] += 1
-                elif pair in large_set:
-                    c["pred_count_carry_large"] += 1
-
-            # 4.4  Small / large classification (overall)
-            if pair in small_set:
-                c["pred_count_small"] += 1
-            elif pair in large_set:
-                c["pred_count_large"] += 1
+    c = {
+        "pred_count": pred_count,
+        "pred_count_test": pred_count_test,
+        "pred_count_carry": pred_count_carry,
+        "pred_count_test_carry": pred_count_test_carry,
+        "pred_count_small": pred_count_small,
+        "pred_count_test_small": pred_count_test_small,
+        "pred_count_carry_small": pred_count_carry_small,
+        "pred_count_test_carry_small": pred_count_test_carry_small,
+        "pred_count_large": pred_count_large,
+        "pred_count_test_large": pred_count_test_large,
+        "pred_count_carry_large": pred_count_carry_large,
+        "pred_count_test_carry_large": pred_count_test_carry_large,
+    }
 
     # Compute totals (used for accuracies)
     totals = {
@@ -152,33 +164,33 @@ def predictions(decision_module: dict, unit_module: dict, carry_module: dict,
     }
 
     # Build a single-row wide Pandas DataFrame: for each metric we create three
-    # columns: <slug>_count, <slug>_total, <slug>_accuracy. This makes appending
+    # columns: <slug>_total, <slug>_count, <slug>_accuracy. This makes appending
     # results from different runs/checkpoints straightforward.
     metrics = [
-        ("total", c["pred_count"], totals["total_examples"]),
-        ("test_pairs", c["pred_count_test"], totals["total_test"]),
-        ("carry", c["pred_count_carry"], totals["total_carry"]),
-        ("test_pairs_carry", c["pred_count_test_carry"], totals["total_test_carry"]),
-        ("small", c["pred_count_small"], totals["total_small"]),
-        ("test_pairs_small", c["pred_count_test_small"], totals["total_test_small"]),
-        ("carry_small", c["pred_count_carry_small"], totals["total_carry_small"]),
-        ("test_pairs_carry_small", c["pred_count_test_carry_small"], totals["total_test_carry_small"]),
-        ("large", c["pred_count_large"], totals["total_large"]),
-        ("test_pairs_large", c["pred_count_test_large"], totals["total_test_large"]),
-        ("carry_large", c["pred_count_carry_large"], totals["total_carry_large"]),
-        ("test_pairs_carry_large", c["pred_count_test_carry_large"], totals["total_test_carry_large"]),
+        ("total", totals["total_examples"], c["pred_count"]),
+        ("test_pairs", totals["total_test"], c["pred_count_test"]),
+        ("carry", totals["total_carry"], c["pred_count_carry"]),
+        ("test_pairs_carry", totals["total_test_carry"], c["pred_count_test_carry"]),
+        ("small", totals["total_small"], c["pred_count_small"]),
+        ("test_pairs_small", totals["total_test_small"], c["pred_count_test_small"]),
+        ("carry_small", totals["total_carry_small"], c["pred_count_carry_small"]),
+        ("test_pairs_carry_small", totals["total_test_carry_small"], c["pred_count_test_carry_small"]),
+        ("large", totals["total_large"], c["pred_count_large"]),
+        ("test_pairs_large", totals["total_test_large"], c["pred_count_test_large"]),
+        ("carry_large", totals["total_carry_large"], c["pred_count_carry_large"]),
+        ("test_pairs_carry_large", totals["total_test_carry_large"], c["pred_count_test_carry_large"]),
     ]
 
     row = {}
-    for slug, count_val, total_val in metrics:
+    for slug, total_val, count_val in metrics:
         # Compute accuracy as percent with 2 decimals when denominator > 0
         if total_val:
             acc = round(100 * count_val / total_val, 2)
         else:
             acc = None
 
-        row[f"{slug}_count"] = int(count_val)
         row[f"{slug}_total"] = int(total_val)
+        row[f"{slug}_count"] = int(count_val)
         row[f"{slug}_accuracy"] = acc
 
     df = pd.DataFrame([row])

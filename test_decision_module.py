@@ -1,9 +1,9 @@
-# USE: nohup python test_decision_module.py 0.01 WI > logs_test_decision.out 2>&1 &
+# USE: nohup python test_decision_module.py 0.01 WI argmax > logs_test_decision.out 2>&1 &
 import os
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
 import jax
-#print(jax.devices())  # should only show CPU
+print(jax.devices())  # should only show CPU
 
 import jax.numpy as jnp
 import pandas as pd
@@ -19,11 +19,13 @@ from little_learner.modules.decision_module.utils import (
 from little_learner.modules.decision_module.test_utils import (
     predictions, parse_config
 )
+from little_learner.modules.decision_module.model import decision_model_argmax, decision_model_vector
 
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit, Local or Lenovo
 EPSILON = float(sys.argv[1])  # Noise factor for parameter initialization
 PARAM_TYPE = str(sys.argv[2]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+MODEL_TYPE = str(sys.argv[3]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs
 
 # --- Paths ---
 if CLUSTER.lower() == "cuenca":
@@ -42,8 +44,9 @@ else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
 MODULES_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe"
-FOLDER_DIR = f"{MODULES_DIR}/decision_module/{PARAM_TYPE}/epsilon_{EPSILON:.2f}"
-SAVE_DIR = f"{MODULES_DIR}/decision_module/{PARAM_TYPE}/tests"
+RAW_DIR = f"{MODULES_DIR}/decision_module"
+FOLDER_DIR = f"{RAW_DIR}/{PARAM_TYPE}/{MODEL_TYPE}_version/epsilon_{EPSILON:.2f}"
+SAVE_DIR = f"{RAW_DIR}/{PARAM_TYPE}/{MODEL_TYPE}_version/tests"
 SAVE_DIR_CHECKPOINTS = f"{SAVE_DIR}/epsilon_{EPSILON:.2f}"
 DATASET_DIR = f"{CODE_DIR}/datasets"
 
@@ -55,6 +58,15 @@ os.makedirs(SAVE_DIR_CHECKPOINTS, exist_ok=True)
 all_pairs = load_dataset(os.path.join(DATASET_DIR, "all_valid_additions.txt"))
 x_test, y_test = generate_test_dataset(all_pairs)
 
+# Select model function
+if MODEL_TYPE == "vector":
+    model_fn = decision_model_vector
+elif MODEL_TYPE == "argmax":
+    model_fn = decision_model_argmax
+else:
+    raise ValueError("Invalid model type. Choose 'argmax' or 'vector'.")
+
+# --- Run tests ---
 all_tests = pd.DataFrame()
 
 for foldername in os.listdir(FOLDER_DIR):
@@ -66,17 +78,19 @@ for foldername in os.listdir(FOLDER_DIR):
         continue
 
     cfg = parse_config(cfg_path)
+    omega = cfg.get("omega")
     training_id = cfg["training_id"]
     epochs = cfg["epochs"]
     batch_size = cfg["batch_size"]
-    omega = cfg.get("omega")
     total_trainings = epochs * batch_size
 
     filepath = os.path.join(SAVE_DIR_CHECKPOINTS, f"test_{PARAM_TYPE}_{EPSILON}_{training_id}.csv")
     
-    unit_module, _ = load_extractor_module(omega, MODULES_DIR, model_type='unit_extractor')
-    carry_module, _ = load_extractor_module(omega, MODULES_DIR, model_type='carry_over_extractor')
-    
+    carry_module, carry_dir, carry_sizes = load_extractor_module(omega, MODULES_DIR, model_type='carry_extractor')
+    unit_module, unit_dir, unit_sizes = load_extractor_module(omega, MODULES_DIR, model_type='unit_extractor')
+    carry_hidden1, carry_output_dim = carry_sizes
+    unit_hidden1, unit_hidden2, unit_output_dim = unit_sizes
+
     # Run tests for all checkpoints in the MODEL_DIR (search recursively).
     # We sort by numeric checkpoint id so ordering is natural (1,2,3,...)
     processed_any = False
@@ -103,7 +117,10 @@ for foldername in os.listdir(FOLDER_DIR):
         # Load the decision module from the directory that actually contains the checkpoint
         decision_module = load_decision_module(MODEL_DIR, ckpt_id)
 
-        test_data_cp = predictions(decision_module, unit_module, carry_module, x_test, y_test, CODE_DIR)
+        test_data_cp = predictions(decision_module, unit_module, carry_module, x_test, y_test, CODE_DIR, 
+                                   unit_hidden1, unit_hidden2, unit_output_dim,
+                                   carry_hidden1, carry_output_dim,
+                                   model_fn=model_fn)
         test_data_cp["epsilon"] = EPSILON
         test_data_cp["param_type"] = PARAM_TYPE
         test_data_cp["omega"] = omega
@@ -116,7 +133,7 @@ for foldername in os.listdir(FOLDER_DIR):
     # If checkpoints are missing or do not reach the epochs in config, also
     # evaluate the final trained model (trained_model.pkl) and place its
     # results at the last logged epoch and at the configured final epoch.
-    if ckpt_id < epochs:
+    if int(ckpt_id) < epochs:
         trained_model_path = os.path.join(MODEL_DIR, "trained_model.pkl")
 
 
@@ -137,7 +154,10 @@ for foldername in os.listdir(FOLDER_DIR):
                 trained_model = pickle.load(f)
 
             decision_module = load_decision_module(MODEL_DIR)
-            trained_df = predictions(decision_module, unit_module, carry_module, x_test, y_test, CODE_DIR)
+            trained_df = predictions(decision_module, unit_module, carry_module, x_test, y_test, CODE_DIR, 
+                                     unit_hidden1, unit_hidden2, unit_output_dim,
+                                     carry_hidden1, carry_output_dim,
+                                     model_fn=model_fn)
             trained_df['epsilon'] = EPSILON
             trained_df['param_type'] = PARAM_TYPE
             trained_df['omega'] = omega
@@ -161,73 +181,55 @@ for foldername in os.listdir(FOLDER_DIR):
     # Build a per-training CSV including checkpoint 0 (initial parameters) and all checkpoints
     metadata_keys = ["epsilon", "param_type", "omega", "training_id", "total_trainings", "checkpoint"]
 
-    # Attempt to create checkpoint-0 row from initial parameters
-    initial_params_dir = os.path.join(MODULES_DIR, 'decision_module', 'initial_parameters')
-    init_pattern = os.path.join(initial_params_dir, f"trainable_model_{PARAM_TYPE}_{EPSILON}_{training_id}.json")
-    init_paths = glob.glob(init_pattern)
-    init_df = None
+    # Check if checkpoint=0 was already processed
+    checkpoint_0_exists = any(
+        (df['checkpoint'].iloc[0] == '0' or df['checkpoint'].iloc[0] == 0)
+        for df in training_dfs
+    )
 
-    if init_paths:
-        # pick most recent
-        init_path = max(init_paths, key=os.path.getmtime)
-        try:
-            init_params = load_initial_params(init_path)
-            init_pred = predictions(init_params, unit_module, carry_module, x_test, y_test, CODE_DIR)
-            init_pred['epsilon'] = EPSILON
-            init_pred['param_type'] = PARAM_TYPE
-            init_pred['omega'] = omega
-            init_pred['training_id'] = training_id
-            init_pred['total_trainings'] = total_trainings
-            init_pred['checkpoint'] = '0'
-            init_df = init_pred
-        except Exception as e:
-            print(f"Warning: failed to load/run initial params from {init_path}: {e}")
+    # Attempt to create checkpoint-0 row from initial parameters only if not present
+    zero_df = None
+    if not checkpoint_0_exists:
+        initial_params_dir = os.path.join(RAW_DIR, 'initial_parameters')
+        init_pattern = os.path.join(initial_params_dir, f"trainable_model_{PARAM_TYPE}_{EPSILON}_{training_id}.json")
+        init_paths = glob.glob(init_pattern)
+        init_df = None
 
-    # If no checkpoints and no init params, warn
-    if not processed_any and init_df is None:
-        print(f"[WARN] No checkpoints and no initial params found for {MODEL_DIR}.")
+        if init_paths:
+            # pick most recent
+            init_path = max(init_paths, key=os.path.getmtime)
+            try:
+                init_params = load_initial_params(init_path)
+                init_pred = predictions(init_params, unit_module, carry_module, x_test, y_test, CODE_DIR, 
+                                        unit_hidden1, unit_hidden2, unit_output_dim,
+                                        carry_hidden1, carry_output_dim,
+                                        model_fn=model_fn)
+                init_pred['epsilon'] = EPSILON
+                init_pred['param_type'] = PARAM_TYPE
+                init_pred['omega'] = omega
+                init_pred['training_id'] = training_id
+                init_pred['total_trainings'] = total_trainings
+                init_pred['checkpoint'] = '0'
+                init_df = init_pred
+            except Exception as e:
+                print(f"Warning: failed to load/run initial params from {init_path}: {e}")
 
-    # Determine columns base for building checkpoint-0 row
-    if training_dfs:
-        first_df = training_dfs[0]
-        cols = list(first_df.columns)
-    elif init_df is not None:
-        cols = list(init_df.columns)
-    else:
-        cols = metadata_keys
+        # If no checkpoints and no init params, warn
+        if not processed_any and init_df is None:
+            print(f"[WARN] No checkpoints and no initial params found for {MODEL_DIR}.")
 
-    # Build checkpoint-0 dataframe: prefer init_df if available, otherwise build zero row
-    if init_df is not None:
-        # reindex to match cols and fill missing with zeros
-        zero_df = init_df.reindex(columns=cols).fillna(0)
-    else:
-        zero_row = {}
-        for col in cols:
-            if col in metadata_keys:
-                if col == 'epsilon':
-                    zero_row[col] = EPSILON
-                elif col == 'param_type':
-                    zero_row[col] = PARAM_TYPE
-                elif col == 'omega':
-                    zero_row[col] = omega
-                elif col == 'training_id':
-                    zero_row[col] = training_id
-                elif col == 'total_trainings':
-                    zero_row[col] = total_trainings
-                elif col == 'checkpoint':
-                    zero_row[col] = '0'
-            else:
-                if col.endswith('_accuracy'):
-                    zero_row[col] = 0.0
-                elif col.endswith('_count'):
-                    zero_row[col] = 0
-                elif col.endswith('_total'):
-                    # keep same totals as in first checkpoint
-                    zero_row[col] = first_df[col].iloc[0] if col in first_df.columns else 0
-                else:
-                    zero_row[col] = 0
+        # Determine columns base for building checkpoint-0 row
+        if training_dfs:
+            first_df = training_dfs[0]
+            cols = list(first_df.columns)
+        elif init_df is not None:
+            cols = list(init_df.columns)
+        else:
+            cols = metadata_keys
 
-        zero_df = pd.DataFrame([zero_row], columns=cols)
+        if init_df is not None:
+            zero_df = init_df.reindex(columns=cols).fillna(0)
+            zero_df = zero_df.infer_objects(copy=False)
 
     # Sort training_dfs by numeric checkpoint id to keep order
     def _df_ckpt_num(d):
@@ -238,8 +240,16 @@ for foldername in os.listdir(FOLDER_DIR):
 
     training_dfs_sorted = sorted(training_dfs, key=_df_ckpt_num)
 
-    # Concatenate zero row + all checkpoints for this training
-    combined = pd.concat([zero_df] + training_dfs_sorted, ignore_index=True, sort=False)
+    # Filter out empty or all-NA DataFrames before concatenation
+    def _is_valid_df(df):
+        return df is not None and not df.empty and not df.isna().all(axis=None)
+
+    valid_dfs = [df for df in training_dfs_sorted if _is_valid_df(df)]
+
+    if zero_df is not None and _is_valid_df(zero_df):
+        combined = pd.concat([zero_df] + valid_dfs, ignore_index=True, sort=False)
+    else:
+        combined = pd.concat(valid_dfs, ignore_index=True, sort=False)
 
     # Reorder columns: metadata first, then the rest preserving original order
     cols_order = metadata_keys + [c for c in combined.columns if c not in metadata_keys]
@@ -257,8 +267,21 @@ for foldername in os.listdir(FOLDER_DIR):
         
 
 if not all_tests.empty:
+    # Sort by omega, then by checkpoint (as integer)
+    def _ckpt_int(val):
+        try:
+            return int(val)
+        except Exception:
+            return 0
+    all_tests_sorted = all_tests.copy()
+    if 'omega' in all_tests_sorted.columns and 'checkpoint' in all_tests_sorted.columns:
+        all_tests_sorted = all_tests_sorted.sort_values(
+            by=['omega', 'checkpoint'],
+            key=lambda col: col if col.name != 'checkpoint' else col.map(_ckpt_int),
+            ascending=[True, True]
+        )
     results_path = os.path.join(SAVE_DIR, f"tests_{PARAM_TYPE}_{EPSILON:.2f}.csv")
-    all_tests.to_csv(results_path, index=False)
+    all_tests_sorted.to_csv(results_path, index=False)
     print(f"File {results_path} created.")
 else:
     print("No models processed, nothing to write.")

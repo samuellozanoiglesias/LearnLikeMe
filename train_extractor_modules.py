@@ -14,16 +14,16 @@ from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from little_learner.modules.extractor_modules.utils import (
     load_dataset, generate_test_dataset,
-    create_and_save_initial_params, load_initial_params, generate_unit_data, generate_carry_data, one_hot_encode, save_results_and_module
+    create_and_save_initial_params, load_initial_params, generate_train_data, one_hot_encode, save_results_and_module
 )
-from little_learner.modules.extractor_modules.models import UnitModel, CarryModel
+from little_learner.modules.extractor_modules.models import ExtractorModel
 from little_learner.modules.extractor_modules.train_utils import (
     load_train_state, evaluate, train_step, get_predictions, compute_loss
 )
 
 # --- Config ---
 CLUSTER = "cuenca" # Cuenca, Brigit or Local
-MODULE_NAME = sys.argv[1].lower()  # unit_extractor or carry_over_extractor
+MODULE_NAME = sys.argv[1].lower()  # unit_extractor or carry_extractor
 OMEGA = float(sys.argv[2])  # Weber fraction (~0.2) for gaussian noise, if applicable
 
 # --- Training Parameters ---
@@ -52,41 +52,44 @@ os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(PARAMS_DIR, exist_ok=True)
 
+# --- Model Hyperparameters ---
+if MODULE_NAME == "carry_extractor":
+    num_classes = 2
+    FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
+    EPOCHS = 500  # Carry model uses 500 epochs
+    BATCH_SIZE = 50  # Carry model uses batch size of 50
+    SHOW_EVERY_N_EPOCHS = 1  # Show accuracy every 1 epochs
+    CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs
+    structure = [16]  # Carry model hidden layer sizes
+    output_dim = 2  # Carry model output dimension (carry or no carry)
+
+elif MODULE_NAME == "unit_extractor":
+    num_classes = 10
+    FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
+    EPOCHS = 5000  # Unit model uses 6000 epochs
+    BATCH_SIZE = 50  # Unit model uses batch size of 10
+    SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
+    CHECKPOINT_EVERY = 200  # Save checkpoint every 200 epochs
+    structure = [128, 64]  # Unit model hidden layer sizes
+    output_dim = 10  # Unit model output dimension (0-9)
+
+else:
+    raise ValueError("Invalid module name. Choose 'carry_extractor' or 'unit_extractor'.")
+
+
 # --- Data Preparation ---
 DATASET_DIR = f"{CODE_DIR}/datasets"
 single_digit_pairs = load_dataset(os.path.join(DATASET_DIR, "single_digit_additions.txt"))
+x, y = generate_train_data(omega=OMEGA, module_name=MODULE_NAME)
 x_val, y_val = generate_test_dataset(single_digit_pairs, MODULE_NAME)
-
-if MODULE_NAME == "carry_over_extractor":
-    x, y = generate_carry_data(omega=OMEGA)
-    y_one_hot = one_hot_encode(y, num_classes=2)
-    y_val = one_hot_encode(y_val, num_classes=2)
-    model = CarryModel()
-    FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
-    EPOCHS = 100  # Carry model uses 2000 epochs
-    BATCH_SIZE = 1  # Carry model uses batch size of 1
-    SHOW_EVERY_N_EPOCHS = 1  # Show accuracy every 1 epochs
-    CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs
-
-elif MODULE_NAME == "unit_extractor":
-    x, y = generate_unit_data(omega=OMEGA)
-    y_one_hot = one_hot_encode(y, num_classes=10)
-    y_val = one_hot_encode(y_val, num_classes=10)
-    model = UnitModel()
-    FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
-    EPOCHS = 1000  # Unit model uses 1000 epochs
-    BATCH_SIZE = 1  # Unit model uses batch size of 1
-    SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
-    CHECKPOINT_EVERY = 50  # Save checkpoint every 50 epochs
-
-else:
-    raise ValueError("Invalid module name. Choose 'carry_over_extractor' or 'unit_extractor'.")
-
 x = jnp.array(x, dtype=jnp.float32)
-y_one_hot = jnp.array(y_one_hot, dtype=jnp.float32)
+y_one_hot = jnp.array(one_hot_encode(y, num_classes=num_classes), dtype=jnp.float32)
+y_val = jnp.array(one_hot_encode(y_val, num_classes=num_classes), dtype=jnp.float32)
 
 x_train = x
 y_train = y_one_hot
+
+model = ExtractorModel(structure=structure, output_dim=output_dim)
 
 # --- Save Config File ---
 config_path = os.path.join(SAVE_DIR, "config.txt")
@@ -106,7 +109,9 @@ with open(config_path, "w") as f:
     f.write(f"Checkpoint Every: {CHECKPOINT_EVERY}\n")
     f.write(f"Model: {model.__class__.__name__}\n")
     f.write(f"JAX Devices: {jax.devices()}\n")
-
+    f.write(f"Structure: {structure}\n")
+    f.write(f"Output Dim: {output_dim}\n")
+    
 # --- Model & State ---
 if PARAMS_FILE is not None:
     PARAMS_FILE = os.path.join(PARAMS_DIR, PARAMS_FILE)
@@ -122,13 +127,34 @@ state = load_train_state(model, LEARNING_RATE, initial_params)
 # --- Training Loop ---
 log_path = os.path.join(SAVE_DIR, "training_log.csv")
 first_write = True
+
+# Pre-training evaluation: save metrics and a checkpoint for epoch 0
+try:
+    accuracy = evaluate(model, state.params, x_val, y_val)
+    loss = compute_loss(model, state.params, x_val, y_val)
+
+    # Write epoch 0 row to training log
+    pd.DataFrame([{
+        "epoch": 0,
+        "loss": float(loss),
+        "accuracy": float(accuracy),
+    }]).to_csv(log_path, mode='a', index=False, header=first_write)
+    first_write = False
+
+    # Save checkpoint 0 (initial parameters)
+    save_results_and_module(df_results=None, final_accuracy=None, model_params=state.params, save_dir=SAVE_DIR, checkpoint_number=0)
+    print(f"Saved pre-training checkpoint 0 in {SAVE_DIR}")
+except Exception as e:
+    print(f"Warning: pre-training evaluation or checkpoint save failed: {e}")
+
+
 threshold = Decimal('1.0') - Decimal(str(FINISH_TOLERANCE))
 
 for epoch in range(EPOCHS):
     for i in range(0, len(x_train), BATCH_SIZE):
         x_batch = x_train[i:i + BATCH_SIZE]
         y_batch = y_train[i:i + BATCH_SIZE]
-        state, grads = train_step(model, state, x_batch, y_batch)
+        state, grads = train_step(state, x_batch, y_batch)
         #print("Epoch", epoch, "some grad example:", jnp.mean(grads['Dense_0']['kernel']))
 
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
@@ -150,8 +176,8 @@ for epoch in range(EPOCHS):
     
     accuracy_dec = Decimal(str(accuracy)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     if accuracy_dec >= threshold:
-        print("All combinations have been learned correctly! Stopping training.")
-        break
+        print(f"All combinations have been learned correctly! Epoch: {epoch + 1}.")
+        #break
 
 # --- Final Evaluation ---
 final_accuracy = evaluate(model, state.params, x_val, y_val)

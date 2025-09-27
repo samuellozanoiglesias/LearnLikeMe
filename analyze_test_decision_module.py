@@ -1,4 +1,4 @@
-# USE: nohup python analyze_test_decision_module.py WI > logs_analysis_test_decision.out 2>&1 &
+# USE: nohup python analyze_test_decision_module.py WI argmax > logs_analysis_test_decision.out 2>&1 &
 
 import os
 import sys
@@ -13,6 +13,7 @@ import numpy as np
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit, Local or Lenovo
 PARAM_TYPE = str(sys.argv[1]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+MODEL_TYPE = str(sys.argv[2]).lower()  # 'argmax' or 'vector' version of the decision module
 
 # --- Paths ---
 if CLUSTER == "cuenca":
@@ -24,7 +25,7 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module/{PARAM_TYPE}"
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module/{PARAM_TYPE}/{MODEL_TYPE}_version"
 FOLDER_DIR = f"{RAW_DIR}/tests"
 SAVE_DIR = f"{RAW_DIR}/figures_tests"
 
@@ -477,3 +478,4 @@ plot_checkpoint_comparison_by_omega(combined, SAVE_DIR)
 # Cross comparisons: fixed omega (multiple epsilons) and fixed epsilon (multiple omegas)
 #plot_cross_comparisons(combined, SAVE_DIR)
 
+print("Done.")

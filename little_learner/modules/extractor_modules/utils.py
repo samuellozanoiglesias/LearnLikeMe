@@ -73,21 +73,18 @@ def load_initial_params(file_path):
 
 # -------------------- Data Generation --------------------
 # Weber fraction applied when generating data through gaussian noise
-def generate_carry_data(omega=0.0, seed=0):
+def generate_train_data(omega=0.0, seed=0, module_name=None):
     x_data = jnp.array([[a, b] for a in range(10) for b in range(10)], dtype=jnp.float32)
-    y_data = jnp.array([1 if (a + b) >= 10 else 0 for a in range(10) for b in range(10)], dtype=jnp.int32)
+    if module_name == "carry_extractor":
+        y_data = jnp.array([1 if (a + b) >= 10 else 0 for a in range(10) for b in range(10)], dtype=jnp.int32)
+    elif module_name == "unit_extractor":
+        y_data = jnp.array([(a + b) % 10 for a in range(10) for b in range(10)], dtype=jnp.int32)
+    else:
+        raise ValueError("module_name must be 'carry_extractor' or 'unit_extractor'")
+    
     rng = random.PRNGKey(seed)
     # Generate samples from N(mean=x_data, std=omega*|x_data|)
-    std = omega * jnp.abs(x_data)
-    x_data = x_data + random.normal(rng, shape=x_data.shape) * std
-    return x_data, y_data
-
-def generate_unit_data(omega=0.0, seed=0):
-    x_data = jnp.array([[a, b] for a in range(10) for b in range(10)], dtype=jnp.float32)
-    y_data = jnp.array([(a + b) % 10 for a in range(10) for b in range(10)], dtype=jnp.int32)
-    rng = random.PRNGKey(seed)
-    # Generate samples from N(mean=x_data, std=omega*|x_data|)
-    std = omega * jnp.abs(x_data)
+    std = omega #* jnp.abs(x_data)
     x_data = x_data + random.normal(rng, shape=x_data.shape) * std
     return x_data, y_data
 
@@ -107,7 +104,7 @@ def generate_test_dataset(test_pairs: List[Tuple[int, int]], module_name: str) -
         # Calculate target outputs
         sum_units = (a + b) % 10
         carry_units = 1 if (a + b) >= 10 else 0
-        if module_name == "carry_over_extractor":
+        if module_name == "carry_extractor":
             y_data.append(carry_units)
         elif module_name == "unit_extractor":
             y_data.append(sum_units)   

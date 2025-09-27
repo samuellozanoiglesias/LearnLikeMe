@@ -24,9 +24,10 @@ def get_predictions(model, state, x, y):
     true_labels = jnp.argmax(y, axis=-1)
     return predictions, true_labels
 
-@functools.partial(jax.jit, static_argnums=0)
-def train_step(model, state, x, y):
-    loss_fn = lambda params: compute_loss(model, params, x, y)
+@jax.jit
+def train_step(state, x, y):
+    # Use the apply_fn stored in the TrainState to avoid passing Flax Module instances
+    loss_fn = lambda params: optax.softmax_cross_entropy(state.apply_fn({"params": params}, x), y).mean()
     grads = jax.grad(loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
     return state, grads
