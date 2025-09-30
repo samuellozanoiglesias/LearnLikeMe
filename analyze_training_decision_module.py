@@ -1,4 +1,4 @@
-# USE: nohup python analyze_training_decision_module.py WI argmax > logs_analysis_training_decision.out 2>&1 &
+# USE: nohup python analyze_training_decision_module.py 2 FOURTH_STUDY WI argmax > logs_analysis_training_decision.out 2>&1 &
 
 import os
 import sys
@@ -6,13 +6,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-from sklearn.metrics import confusion_matrix
 
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit or Local
-MODULE_NAME = "decision_module"
-PARAM_TYPE = str(sys.argv[1]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
-MODEL_TYPE = str(sys.argv[2]).lower()  # 'argmax' or 'vector' version of the decision module
+NUMBER_SIZE = int(sys.argv[1])  # Number of digits in the numbers to be added (2 for two-digit addition)
+STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+MODEL_TYPE = str(sys.argv[4]).lower()  # 'argmax' or 'vector' version of the decision module
 
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""
@@ -23,7 +23,7 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}/{PARAM_TYPE}/{MODEL_TYPE}_version"
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module/{NUMBER_SIZE}-digit/{STUDY_NAME}/{PARAM_TYPE}/{MODEL_TYPE}_version"
 
 def analyze_multidigit_module(raw_dir):
     figures_dir = os.path.join(raw_dir, "figures")
@@ -59,6 +59,10 @@ def analyze_multidigit_module(raw_dir):
         omega = None
         param_init_type = None
         epsilon = None
+        if not os.path.exists(config_path):
+            print(f"No config.txt were found in {run}")
+            continue        
+
         with open(config_path, "r") as f:
             for line in f:
                 if "Weber fraction (Omega):" in line and ":" in line:
@@ -93,16 +97,6 @@ def analyze_multidigit_module(raw_dir):
                 plt.close()
             else:
                 print(f"No errors to plot for run {run}")
-#
-            ## --- Plot 2: Confusion matrix ---
-            #cm = confusion_matrix(df["y (true)"], df["y (pred)"], labels=range(100))
-            #plt.figure(figsize=(6, 5))
-            #sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False)
-            #plt.title(f"Confusion matrix - ω={omega}")
-            #plt.xlabel("Predicted")
-            #plt.ylabel("Real")
-            #plt.savefig(os.path.join(figures_dir, f"confusion_matrix_omega_{safe_omega}_epsilon_{safe_epsilon}.png"))
-            #plt.close()
 
         else:
             print(f"No training_results.csv were found in {run}")
@@ -110,6 +104,16 @@ def analyze_multidigit_module(raw_dir):
         
         if os.path.exists(log_path):
             log_df = pd.read_csv(log_path)
+            # Ensure accuracy columns are numeric before any aggregation
+            acc_cols = [
+                "test_pairs_no_carry_small_accuracy",
+                "test_pairs_no_carry_large_accuracy",
+                "test_pairs_carry_small_accuracy",
+                "test_pairs_carry_large_accuracy"
+            ]
+            for col in acc_cols:
+                if col in log_df.columns:
+                    log_df[col] = pd.to_numeric(log_df[col], errors='coerce')
             if "epoch" not in log_df.columns:
                 log_df["epoch"] = np.arange(len(log_df))
             log_df["omega"] = omega
@@ -261,7 +265,7 @@ def analyze_multidigit_module(raw_dir):
                     agg = sub.groupby('epsilon')['error_distance'].agg(['mean', 'std']).reset_index()
                     if not agg.empty:
                         plt.figure(figsize=(8, 6))
-                        plt.errorbar(agg['epsilon'], agg['mean'], yerr=agg['std'].fillna(0), marker='o')
+                        plt.errorbar(agg['epsilon'], agg['mean'], yerr=agg['std'].fillna(0).infer_objects(copy=False), marker='o')
                         plt.title(f"Mean Error Distance vs. Epsilon (avg over omegas) - param={param_type}")
                         plt.xlabel('Epsilon')
                         plt.ylabel('Mean Error Distance')
@@ -291,13 +295,16 @@ def analyze_multidigit_module(raw_dir):
                 if col not in pivot_df:
                     continue
                 mean = pivot_df[col].mean(axis=1)
-                std = pivot_df[col].std(axis=1).fillna(0)
+                std = pivot_df[col].std(axis=1).fillna(0).infer_objects(copy=False)
+                mean = pd.to_numeric(mean, errors='coerce')
+                std = pd.to_numeric(std, errors='coerce')
                 plt.plot(mean.index, mean.values, label=lbl, color=colcol)
                 plt.fill_between(mean.index, (mean - std).values, (mean + std).values, color=colcol, alpha=0.2)
             plt.title(title)
             plt.xlabel('epoch')
             plt.ylabel('accuracy')
             plt.ylim(0, 1)
+            plt.xlim(0, 1000)
             plt.legend(loc='best')
             plt.grid(alpha=0.3)
             plt.savefig(fname)
@@ -314,8 +321,19 @@ def analyze_multidigit_module(raw_dir):
                     continue
                 mean = df_runs.mean(axis=1)
                 std = df_runs.std(axis=1).fillna(0)
-                plt.plot(mean.index, mean.values, label=lbl, color=colcol)
-                plt.fill_between(mean.index, (mean - std).values, (mean + std).values, color=colcol, alpha=0.2)
+                # Convert to numpy float arrays for plotting
+                mean = pd.to_numeric(mean, errors='coerce').astype(float).to_numpy()
+                std = pd.to_numeric(std, errors='coerce').astype(float).to_numpy()
+                idx = np.array(df_runs.index, dtype=float)
+                # Remove non-finite values
+                mask = np.isfinite(mean) & np.isfinite(std) & np.isfinite(idx)
+                mean = mean[mask]
+                std = std[mask]
+                idx = idx[mask]
+                if len(mean) == 0:
+                    continue
+                plt.plot(idx, mean, label=lbl, color=colcol)
+                plt.fill_between(idx, mean - std, mean + std, color=colcol, alpha=0.2)
             plt.title(title)
             plt.xlabel('epoch')
             plt.ylabel('accuracy')
@@ -361,6 +379,34 @@ def analyze_multidigit_module(raw_dir):
                 safe_eps = str(eps).replace('.', '_') if eps is not None else 'None'
                 fname = os.path.join(figures_dir, f"accuracies_epochs_agg_param_{param_type}_omega_{safe_om}_eps_{safe_eps}.png")
                 plot_pivot_wrapper(concat, f"Accuracies over epochs (mean ± std) - param={param_type}, ω={om}, ε={eps}", fname)
+
+                # --- New plot: Accuracy (left y) and Loss (right y) vs Epoch for this (omega, epsilon) ---
+                # Aggregate across runs by taking mean per epoch for accuracy and loss (if available)
+                if 'accuracy' in sub.columns and 'loss' in sub.columns:
+                    try:
+                        agg = sub.groupby('epoch').agg({'accuracy': 'mean', 'loss': 'mean'}).reset_index()
+                        color_acc = 'tab:blue'
+                        color_loss = 'tab:red'
+                        fig, ax1 = plt.subplots(figsize=(10, 6))
+                        ax1.set_xlabel('Epoch')
+                        ax1.set_ylabel('Accuracy', color=color_acc)
+                        ax1.plot(agg['epoch'], agg['accuracy'], color=color_acc, marker='o', label='Accuracy')
+                        ax1.tick_params(axis='y', labelcolor=color_acc)
+                        ax1.set_xlim(0, 1000)
+
+                        ax2 = ax1.twinx()
+                        ax2.set_ylabel('Loss', color=color_loss)
+                        ax2.plot(agg['epoch'], agg['loss'], color=color_loss, marker='x', label='Loss')
+                        ax2.tick_params(axis='y', labelcolor=color_loss)
+                        ax2.set_xlim(0, 1000)
+
+                        plt.title(f'Accuracy and Loss vs. Epoch - param={param_type}, ω={om}, ε={eps}')
+                        fig.tight_layout()
+                        fname2 = os.path.join(figures_dir, f"accuracy_loss_vs_epoch_param_{param_type}_omega_{safe_om}_eps_{safe_eps}.png")
+                        plt.savefig(fname2)
+                        plt.close(fig)
+                    except Exception as e:
+                        print(f"Could not create accuracy/loss plot for ω={om}, ε={eps}, param={param_type}: {e}")
 
             # 2) Per omega aggregated across epsilons
             for om in sorted(subset_param['omega'].dropna().unique()):
@@ -510,7 +556,7 @@ def analyze_multidigit_module(raw_dir):
                 agg = sub.groupby('epsilon')['accuracy'].agg(['mean', 'std']).reset_index()
                 if not agg.empty:
                     plt.figure(figsize=(8, 6))
-                    plt.errorbar(agg['epsilon'], agg['mean'], yerr=agg['std'].fillna(0), marker='o')
+                    plt.errorbar(agg['epsilon'], agg['mean'], yerr=agg['std'].fillna(0).infer_objects(copy=False), marker='o')
                     plt.title(f"Last Epoch Accuracy vs. Epsilon (avg over omegas) - param={param_type}")
                     plt.xlabel('Epsilon')
                     plt.ylabel('Accuracy')

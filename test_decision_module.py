@@ -1,5 +1,6 @@
-# USE: nohup python test_decision_module.py 0.01 WI argmax > logs_test_decision.out 2>&1 &
+# USE: nohup python test_decision_module.py 2 FOURTH_STUDY WI argmax 0.10 > logs_test_decision.out 2>&1 &
 import os
+
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
 import jax
@@ -14,7 +15,8 @@ import sys
 
 from little_learner.modules.decision_module.utils import (
     load_dataset, generate_test_dataset,
-    load_extractor_module, load_decision_module, load_initial_params
+    load_extractor_module, load_decision_module, load_initial_params,
+    _parse_structure
 )
 from little_learner.modules.decision_module.test_utils import (
     predictions, parse_config
@@ -23,9 +25,11 @@ from little_learner.modules.decision_module.model import decision_model_argmax, 
 
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit, Local or Lenovo
-EPSILON = float(sys.argv[1])  # Noise factor for parameter initialization
-PARAM_TYPE = str(sys.argv[2]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
-MODEL_TYPE = str(sys.argv[3]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs
+NUMBER_SIZE = int(sys.argv[1])  # Number of digits in the numbers to be added (2 for two-digit addition)
+STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+MODEL_TYPE = str(sys.argv[4]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs
+EPSILON = float(sys.argv[5])  # Noise factor for parameter initialization
 
 # --- Paths ---
 if CLUSTER.lower() == "cuenca":
@@ -43,12 +47,12 @@ elif CLUSTER.lower() == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
+DATASET_DIR = f"{CODE_DIR}/datasets/{NUMBER_SIZE}-digit"
 MODULES_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe"
-RAW_DIR = f"{MODULES_DIR}/decision_module"
+RAW_DIR = f"{MODULES_DIR}/decision_module/{NUMBER_SIZE}-digit/{STUDY_NAME}"
 FOLDER_DIR = f"{RAW_DIR}/{PARAM_TYPE}/{MODEL_TYPE}_version/epsilon_{EPSILON:.2f}"
 SAVE_DIR = f"{RAW_DIR}/{PARAM_TYPE}/{MODEL_TYPE}_version/tests"
 SAVE_DIR_CHECKPOINTS = f"{SAVE_DIR}/epsilon_{EPSILON:.2f}"
-DATASET_DIR = f"{CODE_DIR}/datasets"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(SAVE_DIR_CHECKPOINTS, exist_ok=True)
@@ -82,20 +86,23 @@ for foldername in os.listdir(FOLDER_DIR):
     training_id = cfg["training_id"]
     epochs = cfg["epochs"]
     batch_size = cfg["batch_size"]
+    checkpoint_every = cfg["checkpoint_every"]
     total_trainings = epochs * batch_size
 
     filepath = os.path.join(SAVE_DIR_CHECKPOINTS, f"test_{PARAM_TYPE}_{EPSILON}_{training_id}.csv")
     
-    carry_module, carry_dir, carry_sizes = load_extractor_module(omega, MODULES_DIR, model_type='carry_extractor')
-    unit_module, unit_dir, unit_sizes = load_extractor_module(omega, MODULES_DIR, model_type='unit_extractor')
-    carry_hidden1, carry_output_dim = carry_sizes
-    unit_hidden1, unit_hidden2, unit_output_dim = unit_sizes
+    carry_module, carry_dir, carry_structure = load_extractor_module(omega, MODULES_DIR, model_type='carry_extractor', study_name=STUDY_NAME)
+    unit_module, unit_dir, unit_structure = load_extractor_module(omega, MODULES_DIR, model_type='unit_extractor', study_name=STUDY_NAME)
 
+    carry_structure = _parse_structure(carry_structure)
+    unit_structure = _parse_structure(unit_structure)
+    
     # Run tests for all checkpoints in the MODEL_DIR (search recursively).
     # We sort by numeric checkpoint id so ordering is natural (1,2,3,...)
     processed_any = False
     checkpoint_pattern = os.path.join(MODEL_DIR, "**", "trained_model_checkpoint_*.pkl")
     checkpoint_paths = glob.glob(checkpoint_pattern, recursive=True)
+    expected_checkpoints = [str(e) for e in range(checkpoint_every, epochs + 1, checkpoint_every)]
 
     # Extract numeric id for sorting; use 0 when not found to keep them at front
     def _ckpt_num(path):
@@ -118,9 +125,8 @@ for foldername in os.listdir(FOLDER_DIR):
         decision_module = load_decision_module(MODEL_DIR, ckpt_id)
 
         test_data_cp = predictions(decision_module, unit_module, carry_module, x_test, y_test, CODE_DIR, 
-                                   unit_hidden1, unit_hidden2, unit_output_dim,
-                                   carry_hidden1, carry_output_dim,
-                                   model_fn=model_fn)
+                                   unit_structure=unit_structure, carry_structure=carry_structure,
+                                   model_fn=model_fn, dataset_dir=DATASET_DIR)
         test_data_cp["epsilon"] = EPSILON
         test_data_cp["param_type"] = PARAM_TYPE
         test_data_cp["omega"] = omega
@@ -135,18 +141,7 @@ for foldername in os.listdir(FOLDER_DIR):
     # results at the last logged epoch and at the configured final epoch.
     if int(ckpt_id) < epochs:
         trained_model_path = os.path.join(MODEL_DIR, "trained_model.pkl")
-
-
-        # read training_log to find last logged epoch (if present)
-        training_log_path = os.path.join(MODEL_DIR, "training_log.csv")
-        last_logged_epoch = None
-        if os.path.exists(training_log_path):
-            try:
-                log_df = pd.read_csv(training_log_path)
-                if 'epoch' in log_df.columns:
-                   last_logged_epoch = int(log_df['epoch'].max())
-            except Exception:
-                last_logged_epoch = None
+        present_checkpoints = set(str(df['checkpoint'].iloc[0]) for df in training_dfs)
 
         # If trained_model.pkl exists, use it to generate predictions to fill missing slots
         if os.path.exists(trained_model_path):
@@ -155,24 +150,23 @@ for foldername in os.listdir(FOLDER_DIR):
 
             decision_module = load_decision_module(MODEL_DIR)
             trained_df = predictions(decision_module, unit_module, carry_module, x_test, y_test, CODE_DIR, 
-                                     unit_hidden1, unit_hidden2, unit_output_dim,
-                                     carry_hidden1, carry_output_dim,
-                                     model_fn=model_fn)
+                                     unit_structure=unit_structure, carry_structure=carry_structure,
+                                     model_fn=model_fn, dataset_dir=DATASET_DIR)
             trained_df['epsilon'] = EPSILON
             trained_df['param_type'] = PARAM_TYPE
             trained_df['omega'] = omega
             trained_df['training_id'] = training_id
             trained_df['total_trainings'] = total_trainings
 
-            # Insert at last_logged_epoch if available and missing
-            if last_logged_epoch is not None:
-                df_copy = trained_df.copy()
-                df_copy['checkpoint'] = str(last_logged_epoch)
-                training_dfs.append(df_copy)
-                processed_any = True
+            for ckpt in expected_checkpoints:
+                if ckpt not in present_checkpoints:
+                    df_copy = trained_df.copy()
+                    df_copy['checkpoint'] = ckpt
+                    training_dfs.append(df_copy)
+                    processed_any = True
 
-            # Insert at target_epoch (final configured epochs) if missing and different
-            if epochs and (last_logged_epoch is None or epochs != last_logged_epoch):
+            # Insert at final configured epoch if missing
+            if epochs and (str(epochs) not in present_checkpoints):
                 df_copy2 = trained_df.copy()
                 df_copy2['checkpoint'] = str(epochs)
                 training_dfs.append(df_copy2)
@@ -201,9 +195,8 @@ for foldername in os.listdir(FOLDER_DIR):
             try:
                 init_params = load_initial_params(init_path)
                 init_pred = predictions(init_params, unit_module, carry_module, x_test, y_test, CODE_DIR, 
-                                        unit_hidden1, unit_hidden2, unit_output_dim,
-                                        carry_hidden1, carry_output_dim,
-                                        model_fn=model_fn)
+                                        unit_structure=unit_structure, carry_structure=carry_structure,
+                                        model_fn=model_fn, dataset_dir=DATASET_DIR)
                 init_pred['epsilon'] = EPSILON
                 init_pred['param_type'] = PARAM_TYPE
                 init_pred['omega'] = omega

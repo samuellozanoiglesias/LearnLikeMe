@@ -33,13 +33,14 @@ def parse_config(path: str) -> dict:
                 cfg["batch_size"] = int(line.split(":")[1].strip())
             elif line.lower().startswith("weber fraction") or line.lower().startswith("omega"):
                 cfg["omega"] = float(line.split(":")[1].strip())
+            elif line.lower().startswith("checkpoint every"):
+                cfg["checkpoint_every"] = int(line.split(":")[1].strip())
     return cfg
 
 def predictions(decision_module: dict, unit_module: dict, carry_module: dict, 
                 x_test: jnp.ndarray, y_test: jnp.ndarray, CODE_DIR: str, 
-                unit_hidden1: int=256, unit_hidden2: int=128, unit_output_dim: int=10,
-                carry_hidden1: int=16, carry_output_dim: int=2,
-                model_fn=decision_model_argmax):
+                unit_structure: list, carry_structure: list,
+                model_fn=decision_model_argmax, dataset_dir=None) -> pd.DataFrame:
     """
     Evaluate model performance.
     
@@ -59,27 +60,41 @@ def predictions(decision_module: dict, unit_module: dict, carry_module: dict,
         same DataFrame is written to `filepath` as CSV (index is omitted).
     """
 
-    pred_tens, pred_units = model_fn(decision_module, x_test, unit_module, carry_module, unit_hidden1, unit_hidden2, unit_output_dim, carry_hidden1, carry_output_dim)
+    pred = model_fn(decision_module, x_test, unit_module, carry_module, unit_structure, carry_structure)
 
-    # Convert outputs to class labels if they are vectors
-    if pred_tens.ndim > 1:
-        pred_tens_decoded = jnp.argmax(pred_tens, axis=1)
+    # If pred is a dict, decode each digit and stack
+    if isinstance(pred, dict):
+        number_size = len(pred)
+        keys_sorted = sorted(pred.keys())
+        pred_decoded = jnp.stack([
+            jnp.argmax(jnp.array(pred[k]), axis=1) if jnp.array(pred[k]).ndim > 1 else jnp.round(jnp.array(pred[k])).astype(int)
+            for k in keys_sorted
+        ], axis=1)
+        true_arr = jnp.stack([
+            jnp.array(y_test[:, i]).astype(int)
+            for i in range(number_size)
+        ], axis=1)
     else:
-        pred_tens_decoded = jnp.round(pred_tens).astype(int)
-    if pred_units.ndim > 1:
-        pred_units_decoded = jnp.argmax(pred_units, axis=1)
-    else:
-        pred_units_decoded = jnp.round(pred_units).astype(int)
+        # pred: shape (N, number_size) or (N, number_size, C) if one-hot
+        if pred.ndim == 3:
+            pred_decoded = jnp.argmax(pred, axis=2)
+        elif pred.ndim == 2:
+            pred_decoded = jnp.round(pred).astype(int)
+        else:
+            pred_decoded = jnp.round(pred).astype(int).reshape(-1, 1)
+        number_size = pred_decoded.shape[1]
+        true_arr = y_test.astype(int)
 
-    pred_tens = pred_tens_decoded
-    pred_units = pred_units_decoded
+    # Decode predictions and targets to integer values
+    powers = 10 ** jnp.arange(number_size - 1, -1, -1)
+    pred_values = jnp.sum(pred_decoded * powers, axis=1)
+    true_values = jnp.sum(true_arr * powers, axis=1)
 
     # Load datasets and extractors
-    DATASET_DIR = f"{CODE_DIR}/datasets"
-    test_pairs = load_dataset(os.path.join(DATASET_DIR, "stimuli_test_pairs.txt"))
-    carry = load_dataset(os.path.join(DATASET_DIR, "carry_additions.txt"))
-    small = load_dataset(os.path.join(DATASET_DIR, "small_additions.txt"))
-    large = load_dataset(os.path.join(DATASET_DIR, "large_additions.txt"))
+    test_pairs = load_dataset(os.path.join(dataset_dir, "stimuli_test_pairs.txt"))
+    carry = load_dataset(os.path.join(dataset_dir, "carry_additions.txt"))
+    small = load_dataset(os.path.join(dataset_dir, "small_additions.txt"))
+    large = load_dataset(os.path.join(dataset_dir, "large_additions.txt"))
 
     # Helper sets for fast membership tests
     test_set = set(test_pairs)
@@ -89,15 +104,14 @@ def predictions(decision_module: dict, unit_module: dict, carry_module: dict,
 
     total_examples = x_test.shape[0]
 
-    # Vectorized decoding of pairs
-    a_arr = (x_test[:, 0].astype(int) * 10 + x_test[:, 1].astype(int)).tolist()
-    b_arr = (x_test[:, 2].astype(int) * 10 + x_test[:, 3].astype(int)).tolist()
-    pairs = list(zip(a_arr, b_arr))
+    # Vectorized decoding of pairs for N-digit numbers
+    digits_per_number = x_test.shape[1] // 2
+    a_arr = jnp.sum(x_test[:, :digits_per_number].astype(int) * (10 ** jnp.arange(digits_per_number - 1, -1, -1)), axis=1)
+    b_arr = jnp.sum(x_test[:, digits_per_number:].astype(int) * (10 ** jnp.arange(digits_per_number - 1, -1, -1)), axis=1)
+    pairs = list(zip(a_arr.tolist(), b_arr.tolist()))
 
     # Vectorized predictions and targets
-    pred_arr = jnp.stack([pred_tens, pred_units], axis=1)
-    true_arr = y_test.astype(int)
-    correct_mask = (pred_arr == true_arr).all(axis=1)
+    correct_mask = (pred_values == true_values)
 
     # Membership masks
     test_mask = np.array([pair in test_set for pair in pairs])

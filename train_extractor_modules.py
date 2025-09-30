@@ -1,4 +1,4 @@
-# USE: nohup python train_extractor_modules.py unit_extractor 0.05 > logs_train_extractor.out 2>&1 &
+# USE: nohup python train_extractor_modules.py unit_extractor THIRD_STUDY-NO_AVERAGED_OMEGA 0.05 > logs_train_extractor.out 2>&1 &
 import os
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
@@ -24,7 +24,8 @@ from little_learner.modules.extractor_modules.train_utils import (
 # --- Config ---
 CLUSTER = "cuenca" # Cuenca, Brigit or Local
 MODULE_NAME = sys.argv[1].lower()  # unit_extractor or carry_extractor
-OMEGA = float(sys.argv[2])  # Weber fraction (~0.2) for gaussian noise, if applicable
+STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+OMEGA = float(sys.argv[3])  # Weber fraction (~0.2) for gaussian noise, if applicable
 
 # --- Training Parameters ---
 LEARNING_RATE = 0.005
@@ -44,7 +45,7 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}" 
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}/{STUDY_NAME}" 
 SAVE_DIR = f"{RAW_DIR}/Training_{timestamp}"
 PARAMS_DIR = f"{RAW_DIR}/initial_parameters"
 
@@ -66,7 +67,7 @@ if MODULE_NAME == "carry_extractor":
 elif MODULE_NAME == "unit_extractor":
     num_classes = 10
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
-    EPOCHS = 5000  # Unit model uses 6000 epochs
+    EPOCHS = 5000  # Unit model uses 5000 epochs
     BATCH_SIZE = 50  # Unit model uses batch size of 10
     SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
     CHECKPOINT_EVERY = 200  # Save checkpoint every 200 epochs

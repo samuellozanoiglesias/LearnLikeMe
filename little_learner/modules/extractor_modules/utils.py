@@ -84,7 +84,7 @@ def generate_train_data(omega=0.0, seed=0, module_name=None):
     
     rng = random.PRNGKey(seed)
     # Generate samples from N(mean=x_data, std=omega*|x_data|)
-    std = omega #* jnp.abs(x_data)
+    std = omega * jnp.abs(x_data)
     x_data = x_data + random.normal(rng, shape=x_data.shape) * std
     return x_data, y_data
 

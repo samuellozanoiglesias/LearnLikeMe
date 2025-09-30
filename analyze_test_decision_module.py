@@ -1,4 +1,4 @@
-# USE: nohup python analyze_test_decision_module.py WI argmax > logs_analysis_test_decision.out 2>&1 &
+# USE: nohup python analyze_test_decision_module.py 2 FOURTH_STUDY WI argmax > logs_analysis_test_decision.out 2>&1 &
 
 import os
 import sys
@@ -12,8 +12,10 @@ import numpy as np
 
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit, Local or Lenovo
-PARAM_TYPE = str(sys.argv[1]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
-MODEL_TYPE = str(sys.argv[2]).lower()  # 'argmax' or 'vector' version of the decision module
+NUMBER_SIZE = int(sys.argv[1])  # Number of digits in the numbers to be added (2 for two-digit addition)
+STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+MODEL_TYPE = str(sys.argv[4]).lower()  # 'argmax' or 'vector' version of the decision module    
 
 # --- Paths ---
 if CLUSTER == "cuenca":
@@ -25,7 +27,7 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module/{PARAM_TYPE}/{MODEL_TYPE}_version"
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module/{NUMBER_SIZE}-digit/{STUDY_NAME}/{PARAM_TYPE}/{MODEL_TYPE}_version"
 FOLDER_DIR = f"{RAW_DIR}/tests"
 SAVE_DIR = f"{RAW_DIR}/figures_tests"
 

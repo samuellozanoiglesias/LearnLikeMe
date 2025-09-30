@@ -1,4 +1,4 @@
-# USE: nohup python analyze_training_extractor_modules.py unit_extractor > logs_analyze_training_extractor.out &
+# USE: nohup python analyze_training_extractor_modules.py unit_extractor FOURTH_STUDY > logs_analyze_training_extractor.out &
 
 import os
 import sys
@@ -10,7 +10,8 @@ from sklearn.metrics import confusion_matrix
 
 # --- Config ---
 CLUSTER = "cuenca"  # Cuenca, Brigit or Local
-MODULE_NAME = sys.argv[1]  # unit_extractor or carry_extractor
+MODULE_NAME = str(sys.argv[1]).lower()  # unit_extractor or carry_extractor
+STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""
@@ -21,7 +22,7 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}"
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}/{STUDY_NAME}"
 
 def analyze_single_digit_modules(raw_dir):
     figures_dir = os.path.join(raw_dir, "figures")

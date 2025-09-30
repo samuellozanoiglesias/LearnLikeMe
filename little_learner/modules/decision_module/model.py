@@ -13,25 +13,26 @@ def decision_model_vector(params: dict, x: jnp.ndarray,
     The next layer uses these probability vectors for output computation.
     Returns probability vectors for tens and units.
     """
-    features = []
     number_size = x.shape[1] // 2
-    # Extract features for each digit pair using pre-trained models
-    for i in range(0, number_size):
-        for j in range(number_size, 2 * number_size):
-            units_input = jnp.array(x[:, [i, j]])
-            carry_output = ExtractorModel(structure=carry_structure, output_dim=2).apply({'params': carry_module}, units_input)
-            unit_output = ExtractorModel(structure=unit_structure, output_dim=10).apply({'params': unit_module}, units_input)
-            carry_feat = jax.nn.softmax(carry_output, axis=-1)
-            unit_feat = jax.nn.softmax(unit_output, axis=-1)
-            features.append(carry_feat)
-            features.append(unit_feat)
-
-    # Concatenate all features
-    concat_features = jnp.concatenate(features, axis=1)
-    # Dense layer for each digit
-    outputs = {}
-    for i in range(number_size + 1):
-        outputs[i] = jnp.dot(concat_features, params[f'dense_{i}'])
+    idx_i = jnp.arange(number_size)
+    idx_j = jnp.arange(number_size, 2 * number_size)
+    pairs = jnp.array([(i, j) for i in idx_i for j in idx_j])
+    single_digit_inputs = x[:, pairs].reshape(x.shape[0], -1, 2)
+    carry_outputs = jnp.stack([
+        jax.nn.softmax(ExtractorModel(structure=carry_structure, output_dim=2).apply({'params': carry_module}, single_digit_inputs[:, k]), axis=-1)
+        for k in range(single_digit_inputs.shape[1])
+    ], axis=1)
+    unit_outputs = jnp.stack([
+        jax.nn.softmax(ExtractorModel(structure=unit_structure, output_dim=10).apply({'params': unit_module}, single_digit_inputs[:, k]), axis=-1)
+        for k in range(single_digit_inputs.shape[1])
+    ], axis=1)
+    # Flatten probability vectors for each pair
+    carry_flat = carry_outputs.reshape(x.shape[0], -1)
+    unit_flat = unit_outputs.reshape(x.shape[0], -1)
+    concat_features = jnp.concatenate([carry_flat, unit_flat], axis=1)
+    outputs = jnp.stack([
+        jnp.dot(concat_features, params[f'dense_{i}']) for i in range(number_size + 1)
+    ], axis=1)
     return outputs
 
 
@@ -50,25 +51,30 @@ def decision_model_argmax(params: dict, x: jnp.ndarray,
     Returns:
         Tuple (tens_out, units_out) containing predicted tens and units of the sum
     """
-    features = []
     number_size = x.shape[1] // 2
-    # Extract features for each digit pair using pre-trained models
-    for i in range(0, number_size):
-        for j in range(number_size, 2 * number_size):
-            units_input = jnp.array(x[:, [i, j]])
-            carry_output = ExtractorModel(structure=carry_structure, output_dim=2).apply({'params': carry_module}, units_input)
-            unit_output = ExtractorModel(structure=unit_structure, output_dim=10).apply({'params': unit_module}, units_input)
-            carry_feat = jnp.argmax(carry_output, axis=-1)
-            unit_feat = jnp.argmax(unit_output, axis=-1)
-            features.append(carry_feat[:, None])
-            features.append(unit_feat[:, None])
-
-    # Concatenate all features
-    concat_features = jnp.concatenate(features, axis=1)
-    # Dense layer for each digit
-    outputs = {}
-    for i in range(number_size + 1):
-        outputs[i] = jnp.dot(concat_features, params[f'dense_{i}'])
+    # Vectorized feature extraction for all digit pairs
+    idx_i = jnp.arange(number_size)
+    idx_j = jnp.arange(number_size, 2 * number_size)
+    # Create all (i, j) pairs
+    pairs = jnp.array([(i, j) for i in idx_i for j in idx_j])
+    # Gather inputs for all pairs: shape (num_pairs, batch, 2)
+    single_digit_inputs = x[:, pairs].reshape(x.shape[0], -1, 2)
+    # Vectorized apply for carry and unit models
+    carry_outputs = jnp.stack([
+        jnp.argmax(ExtractorModel(structure=carry_structure, output_dim=2).apply({'params': carry_module}, single_digit_inputs[:, k]), axis=-1)
+        for k in range(single_digit_inputs.shape[1])
+    ], axis=1)
+    unit_outputs = jnp.stack([
+        jnp.argmax(ExtractorModel(structure=unit_structure, output_dim=10).apply({'params': unit_module}, single_digit_inputs[:, k]), axis=-1)
+        for k in range(single_digit_inputs.shape[1])
+    ], axis=1)
+    # Concatenate features: shape (batch, num_pairs * 2)
+    concat_features = jnp.concatenate([carry_outputs, unit_outputs], axis=1)
+    # Dense layer for each digit output, stack results: shape (batch, number_size+1)
+    outputs = jnp.stack([
+        jnp.dot(concat_features, params[f'dense_{i}']) for i in range(number_size + 1)
+    ], axis=1)
+    # Return shape (batch, number_size+1) for compatibility with compute_loss
     return outputs
 
 
