@@ -1,4 +1,4 @@
-# USE: nohup python train_extractor_modules.py unit_extractor THIRD_STUDY-NO_AVERAGED_OMEGA 0.05 > logs_train_extractor.out 2>&1 &
+# USE: nohup python train_extractor_modules.py unit_extractor THIRD_STUDY-NO_AVERAGED_OMEGA 0.05 No Yes Decreasing_exponential 0.1 > logs_train_extractor.out 2>&1 &
 import os
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
@@ -14,7 +14,7 @@ from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from little_learner.modules.extractor_modules.utils import (
     load_dataset, generate_test_dataset,
-    create_and_save_initial_params, load_initial_params, generate_train_data, one_hot_encode, save_results_and_module
+    create_and_save_initial_params, load_initial_params, generate_batch_data, one_hot_encode, save_results_and_module
 )
 from little_learner.modules.extractor_modules.models import ExtractorModel
 from little_learner.modules.extractor_modules.train_utils import (
@@ -26,10 +26,15 @@ CLUSTER = "cuenca" # Cuenca, Brigit or Local
 MODULE_NAME = sys.argv[1].lower()  # unit_extractor or carry_extractor
 STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 OMEGA = float(sys.argv[3])  # Weber fraction (~0.2) for gaussian noise, if applicable
+FIXED_VARIABILITY = len(sys.argv) > 4 and sys.argv[4].lower() in ['yes', 'true', '1']  # Fixed variability flag (Yes/No)
+EARLY_STOP = len(sys.argv) > 5 and sys.argv[5].lower() in ['yes', 'true', '1']  # Early stopping flag (Yes/No)
+TRAINING_DISTRIBUTION_TYPE = str(sys.argv[6]).lower() if len(sys.argv) > 6 else "none"  # Use curriculum learning for training (Decreasing_exponential or Balanced)
+ALPHA_CURRICULUM = float(sys.argv[7]) if len(sys.argv) > 7 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
 
 # --- Training Parameters ---
-LEARNING_RATE = 0.005
+LEARNING_RATE = 0.003
 PARAMS_FILE = None  # Set to None to create new params, or provide a path to load existing params
+EPOCH_SIZE = 100  # Number of examples per epoch
 
 # --- Paths ---
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -58,7 +63,7 @@ if MODULE_NAME == "carry_extractor":
     num_classes = 2
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
     EPOCHS = 500  # Carry model uses 500 epochs
-    BATCH_SIZE = 50  # Carry model uses batch size of 50
+    BATCH_SIZE = 25 
     SHOW_EVERY_N_EPOCHS = 1  # Show accuracy every 1 epochs
     CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs
     structure = [16]  # Carry model hidden layer sizes
@@ -68,7 +73,7 @@ elif MODULE_NAME == "unit_extractor":
     num_classes = 10
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
     EPOCHS = 5000  # Unit model uses 5000 epochs
-    BATCH_SIZE = 50  # Unit model uses batch size of 10
+    BATCH_SIZE = 25
     SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
     CHECKPOINT_EVERY = 200  # Save checkpoint every 200 epochs
     structure = [128, 64]  # Unit model hidden layer sizes
@@ -81,14 +86,13 @@ else:
 # --- Data Preparation ---
 DATASET_DIR = f"{CODE_DIR}/datasets"
 single_digit_pairs = load_dataset(os.path.join(DATASET_DIR, "single_digit_additions.txt"))
-x, y = generate_train_data(omega=OMEGA, module_name=MODULE_NAME)
-x_val, y_val = generate_test_dataset(single_digit_pairs, MODULE_NAME)
-x = jnp.array(x, dtype=jnp.float32)
-y_one_hot = jnp.array(one_hot_encode(y, num_classes=num_classes), dtype=jnp.float32)
-y_val = jnp.array(one_hot_encode(y_val, num_classes=num_classes), dtype=jnp.float32)
 
-x_train = x
-y_train = y_one_hot
+# Generate all possible training pairs for curriculum learning
+all_train_pairs = [(a, b) for a in range(10) for b in range(10)]
+
+# Generate validation data
+x_val, y_val = generate_test_dataset(single_digit_pairs, MODULE_NAME)
+y_val = jnp.array(one_hot_encode(y_val, num_classes=num_classes), dtype=jnp.float32)
 
 model = ExtractorModel(structure=structure, output_dim=output_dim)
 
@@ -103,9 +107,14 @@ with open(config_path, "w") as f:
     f.write(f"Batch Size: {BATCH_SIZE}\n")
     f.write(f"Parameters File: {PARAMS_FILE if PARAMS_FILE else 'New parameters generated'}\n")
     f.write(f"Weber fraction: {OMEGA}\n")
+    f.write(f"Fixed Variability: {'Yes' if FIXED_VARIABILITY else 'No'}\n")
+    f.write(f"Early Stop: {'Yes' if EARLY_STOP else 'No'}\n")
+    f.write(f"Training Distribution Type: {TRAINING_DISTRIBUTION_TYPE}\n")
+    f.write(f"Alpha for curriculum learning: {ALPHA_CURRICULUM}\n")
     f.write(f"Finish Tolerance: {FINISH_TOLERANCE}\n")
-    f.write(f"Data Shape (x): {x.shape}\n")
-    f.write(f"Data Shape (y): {y.shape}\n")
+    f.write(f"Epoch Size: {EPOCH_SIZE}\n")
+    f.write(f"Batches per epoch: {max(1, EPOCH_SIZE // BATCH_SIZE)}\n")
+    f.write(f"Training pairs available: {len(all_train_pairs)}\n")
     f.write(f"Show Every N Epochs: {SHOW_EVERY_N_EPOCHS}\n")
     f.write(f"Checkpoint Every: {CHECKPOINT_EVERY}\n")
     f.write(f"Model: {model.__class__.__name__}\n")
@@ -120,7 +129,7 @@ if PARAMS_FILE is not None:
 else:
     PARAMS_FILE = os.path.join(PARAMS_DIR, f"initial_params_{timestamp}.json")
     rng = random.PRNGKey(42)
-    input_shape = (1, x_train.shape[1])  # (batch_size, sequence_length, features)
+    input_shape = (1, 2)  # (batch_size, 2 features for a and b)
     initial_params = create_and_save_initial_params(model, rng, input_shape, PARAMS_FILE)
 
 state = load_train_state(model, LEARNING_RATE, initial_params)
@@ -148,14 +157,30 @@ try:
 except Exception as e:
     print(f"Warning: pre-training evaluation or checkpoint save failed: {e}")
 
-
 threshold = Decimal('1.0') - Decimal(str(FINISH_TOLERANCE))
 
+# Calculate number of batches per epoch based on EPOCH_SIZE
+batches_per_epoch = max(1, EPOCH_SIZE // BATCH_SIZE)  # At least 1 batch per epoch
+
+# Initialize df_results for potential early stopping
+df_results = None
+
 for epoch in range(EPOCHS):
-    for i in range(0, len(x_train), BATCH_SIZE):
-        x_batch = x_train[i:i + BATCH_SIZE]
-        y_batch = y_train[i:i + BATCH_SIZE]
-        state, grads = train_step(state, x_batch, y_batch)
+    # Generate training batches dynamically with curriculum learning
+    for batch_idx in range(batches_per_epoch):
+        # Generate batch with curriculum learning
+        x_batch, y_batch = generate_batch_data(
+            all_train_pairs, BATCH_SIZE, omega=OMEGA, 
+            seed=epoch * batches_per_epoch + batch_idx,  # Unique seed per batch
+            module_name=MODULE_NAME, fixed_variability=FIXED_VARIABILITY,
+            distribution=TRAINING_DISTRIBUTION_TYPE, alpha=ALPHA_CURRICULUM
+        )
+        
+        # Convert to proper format
+        x_batch = jnp.array(x_batch, dtype=jnp.float32)
+        y_batch_one_hot = jnp.array(one_hot_encode(y_batch, num_classes=num_classes), dtype=jnp.float32)
+        
+        state, grads = train_step(state, x_batch, y_batch_one_hot)
         #print("Epoch", epoch, "some grad example:", jnp.mean(grads['Dense_0']['kernel']))
 
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
@@ -178,22 +203,62 @@ for epoch in range(EPOCHS):
     accuracy_dec = Decimal(str(accuracy)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     if accuracy_dec >= threshold:
         print(f"All combinations have been learned correctly! Epoch: {epoch + 1}.")
-        #break
+        if EARLY_STOP:        
+            # Save last epoch info for filling remaining epochs
+            last_epoch = epoch + 1
+            last_metrics = {
+                "epoch": None,  # will be set in loop
+                "loss": float(loss),
+                "accuracy": float(accuracy),
+            }
 
-# --- Final Evaluation ---
-final_accuracy = evaluate(model, state.params, x_val, y_val)
-print(f"Final accuracy: {final_accuracy:.4f}")
+            # Generate final results table for early stopping
+            try:
+                preds, true_labels = get_predictions(model, state, x_val, y_val)
+                results = []
+                for i in range(len(x_val)):
+                    x1, x2 = x_val[i]
+                    y_true = int(true_labels[i])
+                    y_pred = int(preds[i])
+                    results.append({"x1": x1, "x2": x2, "y (real)": y_true, "pred": y_pred})
+                df_results = pd.DataFrame(results)
+            except Exception as e:
+                print(f"[ERROR] Failed to generate results table during early stopping: {e}")
+                df_results = None
 
-# --- Results Table ---
-preds, true_labels = get_predictions(model, state, x_val, y_val)
-results = []
-for i in range(len(x_val)):
-    x1, x2 = x_val[i]
-    y_true = int(true_labels[i])
-    y_pred = int(preds[i])
-    results.append({"x1": x1, "x2": x2, "y (real)": y_true, "pred": y_pred})
-df_results = pd.DataFrame(results)
-print(df_results)
+            # Save final checkpoint with current parameters
+            try:
+                save_results_and_module(df_results=df_results, final_accuracy=accuracy, model_params=state.params, save_dir=SAVE_DIR, checkpoint_number=last_epoch)
+                print(f"Saved final checkpoint {last_epoch} after achieving target accuracy in {SAVE_DIR}")
+            except Exception as e:
+                print(f"[ERROR] Failed to save final checkpoint {last_epoch}: {e}")
 
-# --- Save Everything ---
-save_results_and_module(df_results, final_accuracy, state.params, SAVE_DIR)
+            # Fill remaining epochs with last metrics
+            for fill_epoch in range(last_epoch + SHOW_EVERY_N_EPOCHS - (last_epoch % SHOW_EVERY_N_EPOCHS), EPOCHS + 1, SHOW_EVERY_N_EPOCHS):
+                last_metrics["epoch"] = fill_epoch
+                pd.DataFrame([last_metrics]).to_csv(log_path, mode='a', index=False, header=False)
+
+            break
+
+# --- Final Evaluation (only if training completed without early stopping) ---
+if df_results is None:  # Only run if we didn't break early
+    final_accuracy = evaluate(model, state.params, x_val, y_val)
+    print(f"Final accuracy: {final_accuracy:.4f}")
+
+    # --- Results Table ---
+    preds, true_labels = get_predictions(model, state, x_val, y_val)
+    results = []
+    for i in range(len(x_val)):
+        x1, x2 = x_val[i]
+        y_true = int(true_labels[i])
+        y_pred = int(preds[i])
+        results.append({"x1": x1, "x2": x2, "y (real)": y_true, "pred": y_pred})
+    df_results = pd.DataFrame(results)
+    print(df_results)
+
+    # --- Save Everything ---
+    save_results_and_module(df_results, final_accuracy, state.params, SAVE_DIR)
+else:
+    print("Training stopped early due to achieving target accuracy.")
+    print(df_results)
+print('Training complete.')

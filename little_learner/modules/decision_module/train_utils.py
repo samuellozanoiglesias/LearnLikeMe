@@ -53,33 +53,6 @@ def update_params(params: dict, x: jnp.ndarray, y: jnp.ndarray,
     grads = jax.grad(compute_loss)(params, x, y, unit_module, carry_module, unit_structure, carry_structure, model_fn)
     return jax.tree_util.tree_map(lambda p, g: p - lr * g, params, grads)
 
-# --- OPTIMIZER SETUP ---
-def create_optimizer(lr=1e-3, grad_clip=1.0):
-    """Create optax optimizer (Adam + gradient clipping)."""
-    return optax.chain(
-        optax.clip_by_global_norm(grad_clip),
-        optax.adam(lr)
-    )
-
-def init_optimizer_state(params, lr=1e-3, grad_clip=1.0):
-    optimizer = create_optimizer(lr, grad_clip)
-    return optimizer, optimizer.init(params)
-
-@partial(jax.jit, static_argnames=['model_fn', 'unit_structure', 'carry_structure', 'optimizer'])
-def optimizer_update_params(params, opt_state, x, y, unit_module, carry_module,
-                 unit_structure=[256, 128], carry_structure=[16],
-                 model_fn=decision_model_argmax, optimizer=None):
-    """
-    Update parameters using optax optimizer.
-    Returns: new_params, new_opt_state, loss
-    """
-    def loss_fn(p):
-        return compute_loss(p, x, y, unit_module, carry_module, unit_structure, carry_structure, model_fn)
-    grads = jax.grad(loss_fn)(params)
-    updates, new_opt_state = optimizer.update(grads, opt_state, params)
-    new_params = optax.apply_updates(params, updates)
-    return new_params, new_opt_state
-
 @partial(jax.jit, static_argnames=['model_fn', 'carry_set', 'small_set', 'large_set', 'unit_structure', 'carry_structure'])
 def evaluate_module(params: dict, x_test: jnp.ndarray, y_test: jnp.ndarray,
                   unit_module: dict, carry_module: dict,
@@ -153,75 +126,74 @@ def load_trained_model(filepath: str) -> dict:
 
 # ------------------- TRAINING DATASET GENERATION -------------------
 
-def generate_train_dataset(train_pairs: List[Tuple[int, int]], size_epoch: int, omega: float, distribution: str,
-                            alpha: float=0.05, number_size: int=None, seed: int = 0) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def generate_train_dataset(train_pairs: List[Tuple[int, int]], batch_size: int, omega: float, distribution: str,
+                            alpha: float=0.05, number_size: int=None, seed: int = 0, fixed_variability: bool = False) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Generate training dataset with optional curriculum learning.
     
     Args:
         train_pairs: List of training number pairs
-        size_epoch: Number of samples to generate
+        batch_size: Number of samples to generate
         distribution: Whether to use curriculum learning
+        alpha: Alpha parameter for exponential decay
+        number_size: Number of digits in the numbers
+        seed: Random seed
+        fixed_variability: Whether to use fixed standard deviation
         
     Returns:
         Tuple (x_data, y_data) containing training inputs and target outputs
     """
-    # Convert train_pairs to numpy array for vectorized ops
-    tp = np.asarray(train_pairs, dtype=int)
+    # Convert train_pairs to JAX array for vectorized ops
+    tp = jnp.asarray(train_pairs, dtype=int)
 
     if number_size is None:
-        max_ab = int(max(tp.max(axis=0))) if tp.size > 0 else 0
+        max_ab = int(jnp.max(tp)) if tp.size > 0 else 0
         number_size = len(str(max_ab)) if max_ab > 0 else 1
 
-    if distribution == "Decreasing_exponential":
-        probabilities = decreasing_exponential(train_pairs, alpha)
-        selected_indices = np.random.choice(len(tp), size=size_epoch, p=probabilities)
-        selected = tp[selected_indices]
-    else:
+    rng = jrandom.PRNGKey(seed)
+    if distribution.lower() == "decreasing_exponential":
+        probabilities = jnp.array([jnp.exp(-alpha * (a + b)) for a, b in train_pairs])
+        probabilities = probabilities / jnp.sum(probabilities)
+        indices = jrandom.choice(rng, len(train_pairs), shape=(batch_size,), p=probabilities)
+        selected_pairs = jnp.array([train_pairs[i] for i in indices])
+    elif distribution.lower() == "balanced":
         # Balanced sampling
-        bal = generate_balanced_dataset(train_pairs, size_epoch, number_size)
-        selected = np.asarray(bal, dtype=int)
+        bal = generate_balanced_dataset(train_pairs, batch_size, number_size, rng)
+        selected_pairs = jnp.asarray(bal, dtype=int)
+    else:
+        # Uniform random sampling
+        selected_indices = jrandom.choice(rng, len(tp), shape=(batch_size,), replace=True)
+        selected_pairs = tp[selected_indices]
 
     # Selected a and b arrays
-    a_arr = selected[:, 0].astype(int)
-    b_arr = selected[:, 1].astype(int)
+    a_arr = selected_pairs[:, 0].astype(int)
+    b_arr = selected_pairs[:, 1].astype(int)
 
     # Vectorized digit extraction: produce digits msb->lsb
-    pow_a = 10 ** np.arange(number_size - 1, -1, -1, dtype=int)
+    pow_a = 10 ** jnp.arange(number_size - 1, -1, -1, dtype=int)
     a_digits = ((a_arr[:, None] // pow_a[None, :]) % 10).astype(int)
     b_digits = ((b_arr[:, None] // pow_a[None, :]) % 10).astype(int)
 
     # Sum digits for target (number_size + 1 digits, msb->lsb)
     sum_arr = a_arr + b_arr
-    pow_y = 10 ** np.arange(number_size, -1, -1, dtype=int)
+    pow_y = 10 ** jnp.arange(number_size, -1, -1, dtype=int)
     y_digits = ((sum_arr[:, None] // pow_y[None, :]) % 10).astype(int)
 
-    # Concatenate inputs and convert to jnp arrays
-    x_np = np.concatenate([a_digits, b_digits], axis=1)
-    x_data = jnp.array(x_np)
-    y_data = jnp.array(y_digits)
+    # Concatenate inputs
+    x_data = jnp.concatenate([a_digits, b_digits], axis=1)
+    y_data = y_digits
 
     # Add noise (vectorized) using JAX RNG
     if omega and omega != 0.0:
-        rng = jrandom.PRNGKey(seed)
-        std = omega * jnp.abs(x_data.astype(float))
-        noise = jrandom.normal(rng, shape=x_data.shape) * std
+        rng, noise_key = jrandom.split(rng)
+        if fixed_variability:
+            std = omega  # Fixed standard deviation
+        else:
+            std = omega * jnp.abs(x_data.astype(float))  # Variable standard deviation based on magnitude
+        noise = jrandom.normal(noise_key, shape=x_data.shape) * std
         x_data = x_data + noise
 
     return x_data, y_data
-
-def decreasing_exponential(train_pairs: List[Tuple[int, int]], alpha: float) -> np.ndarray:
-    """    
-    Args:
-        train_pairs: List of number pairs to calculate probabilities for
-        alpha: Normalization factor for the exponential function
-
-    Returns:
-        Array of probabilities for each pair
-    """
-    probabilities = np.array([(np.exp(-alpha*(a + b))) for a, b in train_pairs])
-    return probabilities / probabilities.sum()
-
 
 def categorize_problems(train_pairs: List[Tuple[int, int]], number_size: int) -> Tuple[List[Tuple[int, int]], ...]:
     """
@@ -241,13 +213,14 @@ def categorize_problems(train_pairs: List[Tuple[int, int]], number_size: int) ->
 
 
 def generate_balanced_dataset(train_pairs: List[Tuple[int, int]], 
-                           size_epoch: int, number_size: int) -> List[Tuple[int, int]]:
+                           batch_size: int, number_size: int, rng: jrandom.PRNGKey) -> List[Tuple[int, int]]:
     """
     Generate a balanced dataset with equal representation of problem difficulties.
     
     Args:
         train_pairs: List of all available training pairs
-        size_epoch: Total number of samples to generate
+        batch_size: Total number of samples to generate
+        rng: JAX random key for sampling
         
     Returns:
         List of balanced training pairs
@@ -256,13 +229,16 @@ def generate_balanced_dataset(train_pairs: List[Tuple[int, int]],
     
     # Calculate balanced sample sizes
     total_classes = 3
-    balanced_class_count = size_epoch // total_classes
-    remaining = size_epoch - total_classes * balanced_class_count
+    balanced_class_count = batch_size // total_classes
+    remaining = batch_size - total_classes * balanced_class_count
+    
+    # Split RNG for different sampling operations
+    rng1, rng2, rng3, rng4 = jrandom.split(rng, 4)
     
     # Sample equally from each category
-    balanced_small = np.random.choice(len(small), size=balanced_class_count, replace=True)
-    balanced_medium = np.random.choice(len(medium), size=balanced_class_count, replace=True)
-    balanced_large = np.random.choice(len(large), size=balanced_class_count, replace=True)
+    balanced_small = jrandom.choice(rng1, len(small), shape=(balanced_class_count,), replace=True)
+    balanced_medium = jrandom.choice(rng2, len(medium), shape=(balanced_class_count,), replace=True)
+    balanced_large = jrandom.choice(rng3, len(large), shape=(balanced_class_count,), replace=True)
     
     # Convert indices to pairs
     balanced_pairs = (
@@ -275,12 +251,47 @@ def generate_balanced_dataset(train_pairs: List[Tuple[int, int]],
     remaining_pairs = []
     if remaining > 0:
         all_categories = [small, medium, large]
-        for _ in range(remaining):
-            category = all_categories[np.random.choice(len(all_categories))]
-            idx = np.random.choice(len(category))
+        category_indices = jrandom.choice(rng4, len(all_categories), shape=(remaining,), replace=True)
+        for cat_idx in category_indices:
+            category = all_categories[cat_idx]
+            rng4, subkey = jrandom.split(rng4)
+            idx = jrandom.choice(subkey, len(category))
             remaining_pairs.append(category[idx])
     
     balanced_pairs.extend(remaining_pairs)
-    np.random.shuffle(balanced_pairs)
+    # Shuffle using JAX
+    all_pairs = jnp.array(balanced_pairs)
+    rng4, shuffle_key = jrandom.split(rng4)
+    shuffled_indices = jrandom.permutation(shuffle_key, len(all_pairs))
+    shuffled_pairs = all_pairs[shuffled_indices]
     
-    return balanced_pairs
+    return shuffled_pairs.tolist()
+
+
+
+# --- Legacy: OPTIMIZER SETUP ---
+def create_optimizer(lr=1e-3, grad_clip=1.0):
+    """Create optax optimizer (Adam + gradient clipping)."""
+    return optax.chain(
+        optax.clip_by_global_norm(grad_clip),
+        optax.adam(lr)
+    )
+
+def init_optimizer_state(params, lr=1e-3, grad_clip=1.0):
+    optimizer = create_optimizer(lr, grad_clip)
+    return optimizer, optimizer.init(params)
+
+@partial(jax.jit, static_argnames=['model_fn', 'unit_structure', 'carry_structure', 'optimizer'])
+def optimizer_update_params(params, opt_state, x, y, unit_module, carry_module,
+                 unit_structure=[256, 128], carry_structure=[16],
+                 model_fn=decision_model_argmax, optimizer=None):
+    """
+    Update parameters using optax optimizer.
+    Returns: new_params, new_opt_state, loss
+    """
+    def loss_fn(p):
+        return compute_loss(p, x, y, unit_module, carry_module, unit_structure, carry_structure, model_fn)
+    grads = jax.grad(loss_fn)(params)
+    updates, new_opt_state = optimizer.update(grads, opt_state, params)
+    new_params = optax.apply_updates(params, updates)
+    return new_params, new_opt_state

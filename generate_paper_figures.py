@@ -103,13 +103,8 @@ def analyze_multidigit_module(raw_dir):
             continue
         
         if os.path.exists(log_path):
-            log_df = pd.read_csv(log_path, low_memory=False)
-            # Ensure epoch and accuracy columns are numeric before any aggregation
-            if "epoch" not in log_df.columns:
-                log_df["epoch"] = np.arange(len(log_df))
-            else:
-                log_df["epoch"] = pd.to_numeric(log_df["epoch"], errors='coerce')
-            
+            log_df = pd.read_csv(log_path)
+            # Ensure accuracy columns are numeric before any aggregation
             acc_cols = [
                 "test_pairs_no_carry_small_accuracy",
                 "test_pairs_no_carry_large_accuracy",
@@ -119,12 +114,8 @@ def analyze_multidigit_module(raw_dir):
             for col in acc_cols:
                 if col in log_df.columns:
                     log_df[col] = pd.to_numeric(log_df[col], errors='coerce')
-            
-            # Also ensure accuracy and loss are numeric if they exist
-            if 'accuracy' in log_df.columns:
-                log_df['accuracy'] = pd.to_numeric(log_df['accuracy'], errors='coerce')
-            if 'loss' in log_df.columns:
-                log_df['loss'] = pd.to_numeric(log_df['loss'], errors='coerce')
+            if "epoch" not in log_df.columns:
+                log_df["epoch"] = np.arange(len(log_df))
             log_df["omega"] = omega
             log_df["param_init_type"] = param_init_type
             log_df["epsilon"] = epsilon
@@ -154,10 +145,7 @@ def analyze_multidigit_module(raw_dir):
                 plt.figure(figsize=(10, 6))
                 for col, lbl, colcol in zip(acc_cols, acc_labels, colors):
                     if col in log_df.columns:
-                        # Filter out rows with NaN values in epoch or accuracy columns
-                        valid_mask = log_df['epoch'].notna() & log_df[col].notna()
-                        if valid_mask.any():
-                            plt.plot(log_df.loc[valid_mask, 'epoch'], log_df.loc[valid_mask, col], label=lbl, color=colcol)
+                        plt.plot(log_df['epoch'], log_df[col], label=lbl, color=colcol)
                 plt.title(f"Accuracies over epochs - param={param_init_type}, ω={omega}, ε={epsilon}")
                 plt.xlabel('epoch')
                 plt.ylabel('accuracy')
@@ -397,30 +385,25 @@ def analyze_multidigit_module(raw_dir):
                 # Aggregate across runs by taking mean per epoch for accuracy and loss (if available)
                 if 'accuracy' in sub.columns and 'loss' in sub.columns:
                     try:
-                        # Filter out rows with invalid epoch, accuracy, or loss values
-                        valid_sub = sub[sub['epoch'].notna() & sub['accuracy'].notna() & sub['loss'].notna()]
-                        if not valid_sub.empty:
-                            agg = valid_sub.groupby('epoch').agg({'accuracy': 'mean', 'loss': 'mean'}).reset_index()
-                            color_acc = 'tab:blue'
-                            color_loss = 'tab:red'
-                            fig, ax1 = plt.subplots(figsize=(10, 6))
-                            ax1.set_xlabel('Epoch')
-                            ax1.set_ylabel('Accuracy', color=color_acc)
-                            ax1.plot(agg['epoch'], agg['accuracy'], color=color_acc, marker='o', label='Accuracy')
-                            ax1.tick_params(axis='y', labelcolor=color_acc)
+                        agg = sub.groupby('epoch').agg({'accuracy': 'mean', 'loss': 'mean'}).reset_index()
+                        color_acc = 'tab:blue'
+                        color_loss = 'tab:red'
+                        fig, ax1 = plt.subplots(figsize=(10, 6))
+                        ax1.set_xlabel('Epoch')
+                        ax1.set_ylabel('Accuracy', color=color_acc)
+                        ax1.plot(agg['epoch'], agg['accuracy'], color=color_acc, marker='o', label='Accuracy')
+                        ax1.tick_params(axis='y', labelcolor=color_acc)
 
-                            ax2 = ax1.twinx()
-                            ax2.set_ylabel('Loss', color=color_loss)
-                            ax2.plot(agg['epoch'], agg['loss'], color=color_loss, marker='x', label='Loss')
-                            ax2.tick_params(axis='y', labelcolor=color_loss)
+                        ax2 = ax1.twinx()
+                        ax2.set_ylabel('Loss', color=color_loss)
+                        ax2.plot(agg['epoch'], agg['loss'], color=color_loss, marker='x', label='Loss')
+                        ax2.tick_params(axis='y', labelcolor=color_loss)
 
-                            plt.title(f'Accuracy and Loss vs. Epoch - param={param_type}, ω={om}, ε={eps}')
-                            fig.tight_layout()
-                            fname2 = os.path.join(figures_dir, f"accuracy_loss_vs_epoch_param_{param_type}_omega_{safe_om}_eps_{safe_eps}.png")
-                            plt.savefig(fname2)
-                            plt.close(fig)
-                        else:
-                            print(f"No valid accuracy/loss data for ω={om}, ε={eps}, param={param_type}")
+                        plt.title(f'Accuracy and Loss vs. Epoch - param={param_type}, ω={om}, ε={eps}')
+                        fig.tight_layout()
+                        fname2 = os.path.join(figures_dir, f"accuracy_loss_vs_epoch_param_{param_type}_omega_{safe_om}_eps_{safe_eps}.png")
+                        plt.savefig(fname2)
+                        plt.close(fig)
                     except Exception as e:
                         print(f"Could not create accuracy/loss plot for ω={om}, ε={eps}, param={param_type}: {e}")
 
@@ -468,129 +451,118 @@ def analyze_multidigit_module(raw_dir):
             
         
         # --- Accuracy per (omega, param_init_type, epsilon) ---
-        # Filter out rows with missing epoch or accuracy data
-        valid_combined_logs = combined_logs[combined_logs['epoch'].notna() & combined_logs['accuracy'].notna()]
-        if not valid_combined_logs.empty:
-            last_epoch_acc = (
-                valid_combined_logs.groupby(["omega", "param_init_type", "epsilon"])[["epoch", "accuracy"]]
-                .apply(lambda g: g.loc[g["epoch"].idxmax(), "accuracy"] if not g.empty else np.nan)
-                .reset_index(name="accuracy")
-            )
-            # Remove any rows where accuracy is NaN
-            last_epoch_acc = last_epoch_acc[last_epoch_acc['accuracy'].notna()]
-        else:
-            print("No valid epoch/accuracy data found for final analysis")
-            last_epoch_acc = pd.DataFrame()
+        last_epoch_acc = (
+            combined_logs.groupby(["omega", "param_init_type", "epsilon"])[["epoch", "accuracy"]]
+            .apply(lambda g: g.loc[g["epoch"].idxmax(), "accuracy"])
+            .reset_index(name="accuracy")
+        )
 
-        if not last_epoch_acc.empty:
-            print(last_epoch_acc.head())
+        print(last_epoch_acc.head())
 
-            # Create plots per (param_init_type, epsilon) combination: accuracy vs omega
-            unique_param_combos = last_epoch_acc[["param_init_type", "epsilon"]].drop_duplicates().values.tolist()
-            for param_init_type, eps in unique_param_combos:
-                subset = last_epoch_acc[(last_epoch_acc["param_init_type"] == param_init_type) & (last_epoch_acc["epsilon"] == eps)]
-                if subset.empty:
-                    continue
+        # Create plots per (param_init_type, epsilon) combination: accuracy vs omega
+        unique_param_combos = last_epoch_acc[["param_init_type", "epsilon"]].drop_duplicates().values.tolist()
+        for param_init_type, eps in unique_param_combos:
+            subset = last_epoch_acc[(last_epoch_acc["param_init_type"] == param_init_type) & (last_epoch_acc["epsilon"] == eps)]
+            if subset.empty:
+                continue
 
-                plt.figure(figsize=(10, 6))
-                plt.plot(subset["omega"], subset["accuracy"], marker='o')
-                plt.title(f"Last Epoch Accuracy vs ω - {param_init_type}, ε={eps}")
-                plt.xlabel('ω')
-                plt.ylabel('Accuracy')
-                eps_str = str(eps).replace('.', '_') if eps is not None else 'None'
-                plt.savefig(os.path.join(figures_dir, f"accuracy_vs_omega_param_{param_init_type}_eps_{eps_str}.png"))
-                plt.close()
+            plt.figure(figsize=(10, 6))
+            plt.plot(subset["omega"], subset["accuracy"], marker='o')
+            plt.title(f"Last Epoch Accuracy vs ω - {param_init_type}, ε={eps}")
+            plt.xlabel('ω')
+            plt.ylabel('Accuracy')
+            eps_str = str(eps).replace('.', '_') if eps is not None else 'None'
+            plt.savefig(os.path.join(figures_dir, f"accuracy_vs_omega_param_{param_init_type}_eps_{eps_str}.png"))
+            plt.close()
 
-            # --- 3D plot: omega (x), epsilon (y), accuracy (z) per parameter init type ---
-            for param_type in last_epoch_acc['param_init_type'].unique():
-                sub = last_epoch_acc[last_epoch_acc['param_init_type'] == param_type]
-                if sub.empty:
-                    continue
+        # --- 3D plot: omega (x), epsilon (y), accuracy (z) per parameter init type ---
+        for param_type in last_epoch_acc['param_init_type'].unique():
+            sub = last_epoch_acc[last_epoch_acc['param_init_type'] == param_type]
+            if sub.empty:
+                continue
 
-                # Prepare figure and 3D axes
-                fig = plt.figure(figsize=(10, 8))
-                ax = fig.add_subplot(111, projection='3d')
+            # Prepare figure and 3D axes
+            fig = plt.figure(figsize=(10, 8))
+            ax = fig.add_subplot(111, projection='3d')
 
-                # Scatter the raw points first
-                ax.scatter(sub['omega'], sub['epsilon'], sub['accuracy'], c=sub['accuracy'], cmap='viridis', depthshade=True)
+            # Scatter the raw points first
+            ax.scatter(sub['omega'], sub['epsilon'], sub['accuracy'], c=sub['accuracy'], cmap='viridis', depthshade=True)
 
-                # Try to build a regular grid (omega x epsilon) for surface plotting
+            # Try to build a regular grid (omega x epsilon) for surface plotting
+            try:
+                omegas = np.array(sorted(sub['omega'].dropna().unique()))
+                epss = np.array(sorted(sub['epsilon'].dropna().unique()))
+
+                if len(omegas) > 1 and len(epss) > 1:
+                    # pivot to grid of accuracies
+                    pivot = sub.pivot_table(index='omega', columns='epsilon', values='accuracy')
+                    # ensure full index/columns in sorted order
+                    pivot = pivot.reindex(index=omegas, columns=epss)
+
+                    # Interpolate missing values along each axis when possible
+                    pivot = pivot.sort_index()
+                    pivot = pivot.interpolate(axis=0, limit_direction='both').interpolate(axis=1, limit_direction='both')
+                    # if still NaNs at edges, fill with nearest
+                    pivot = pivot.fillna(method='ffill', axis=0).fillna(method='bfill', axis=0)
+                    pivot = pivot.fillna(method='ffill', axis=1).fillna(method='bfill', axis=1)
+
+                    Z = pivot.values
+                    X, Y = np.meshgrid(omegas, epss, indexing='ij')
+
+                    # plot surface (transpose or orientation should match pivot shape)
+                    surf = ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='none', alpha=0.7)
+                    fig.colorbar(surf, ax=ax, shrink=0.5, aspect=10, pad=0.1)
+                else:
+                    # Not enough distinct omegas/epsilons for a surface — keep scatter only
+                    pass
+            except Exception as e:
+                print(f"Could not draw surface for param {param_type}: {e}")
+
+            ax.set_xlabel('ω')
+            ax.set_ylabel('ε')
+            # Reverse epsilon axis so it runs from high to low (visually left→right)
+            try:
+                if 'epss' in locals() and len(epss) > 0:
+                    ax.set_ylim(epss.max(), epss.min())
+            except Exception:
+                # fallback: attempt to invert y-axis
                 try:
-                    omegas = np.array(sorted(sub['omega'].dropna().unique()))
-                    epss = np.array(sorted(sub['epsilon'].dropna().unique()))
-
-                    if len(omegas) > 1 and len(epss) > 1:
-                        # pivot to grid of accuracies
-                        pivot = sub.pivot_table(index='omega', columns='epsilon', values='accuracy')
-                        # ensure full index/columns in sorted order
-                        pivot = pivot.reindex(index=omegas, columns=epss)
-
-                        # Interpolate missing values along each axis when possible
-                        pivot = pivot.sort_index()
-                        pivot = pivot.interpolate(axis=0, limit_direction='both').interpolate(axis=1, limit_direction='both')
-                        # if still NaNs at edges, fill with nearest
-                        pivot = pivot.fillna(method='ffill', axis=0).fillna(method='bfill', axis=0)
-                        pivot = pivot.fillna(method='ffill', axis=1).fillna(method='bfill', axis=1)
-
-                        Z = pivot.values
-                        X, Y = np.meshgrid(omegas, epss, indexing='ij')
-
-                        # plot surface (transpose or orientation should match pivot shape)
-                        surf = ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='none', alpha=0.7)
-                        fig.colorbar(surf, ax=ax, shrink=0.5, aspect=10, pad=0.1)
-                    else:
-                        # Not enough distinct omegas/epsilons for a surface — keep scatter only
-                        pass
-                except Exception as e:
-                    print(f"Could not draw surface for param {param_type}: {e}")
-
-                ax.set_xlabel('ω')
-                ax.set_ylabel('ε')
-                # Reverse epsilon axis so it runs from high to low (visually left→right)
-                try:
-                    if 'epss' in locals() and len(epss) > 0:
-                        ax.set_ylim(epss.max(), epss.min())
+                    ax.invert_yaxis()
                 except Exception:
-                    # fallback: attempt to invert y-axis
-                    try:
-                        ax.invert_yaxis()
-                    except Exception:
-                        pass
-                ax.set_zlabel('Accuracy')
-                plt.title(f"Accuracy vs ω and ε - param={param_type}")
-                plt.savefig(os.path.join(figures_dir, f"accuracy_vs_omega_epsilon_3d_param_{param_type}.png"))
-                plt.close()
+                    pass
+            ax.set_zlabel('Accuracy')
+            plt.title(f"Accuracy vs ω and ε - param={param_type}")
+            plt.savefig(os.path.join(figures_dir, f"accuracy_vs_omega_epsilon_3d_param_{param_type}.png"))
+            plt.close()
 
-            # --- Epsilon-vs-accuracy comparison plots ---
-            acc_table = last_epoch_acc.copy()
-            acc_table = acc_table[acc_table["epsilon"].notnull()]
-            if not acc_table.empty:
-                for param_type in acc_table["param_init_type"].unique():
-                    sub = acc_table[acc_table["param_init_type"] == param_type]
-                    pivot = sub.pivot_table(index="epsilon", columns="omega", values="accuracy")
-                    if pivot.shape[1] > 0:
-                        plt.figure(figsize=(12, 8))
-                        for col in pivot.columns:
-                            plt.plot(pivot.index, pivot[col], marker='o', label=str(col))
-                        plt.title(f"Last Epoch Accuracy vs. Epsilon - param={param_type}")
-                        plt.xlabel('Epsilon')
-                        plt.ylabel('Accuracy')
-                        plt.legend(loc='best', fontsize='small', ncol=2)
-                        plt.savefig(os.path.join(figures_dir, f"accuracy_vs_epsilon_param_{param_type}.png"))
-                        plt.close()
+        # --- Epsilon-vs-accuracy comparison plots ---
+        acc_table = last_epoch_acc.copy()
+        acc_table = acc_table[acc_table["epsilon"].notnull()]
+        if not acc_table.empty:
+            for param_type in acc_table["param_init_type"].unique():
+                sub = acc_table[acc_table["param_init_type"] == param_type]
+                pivot = sub.pivot_table(index="epsilon", columns="omega", values="accuracy")
+                if pivot.shape[1] > 0:
+                    plt.figure(figsize=(12, 8))
+                    for col in pivot.columns:
+                        plt.plot(pivot.index, pivot[col], marker='o', label=str(col))
+                    plt.title(f"Last Epoch Accuracy vs. Epsilon - param={param_type}")
+                    plt.xlabel('Epsilon')
+                    plt.ylabel('Accuracy')
+                    plt.legend(loc='best', fontsize='small', ncol=2)
+                    plt.savefig(os.path.join(figures_dir, f"accuracy_vs_epsilon_param_{param_type}.png"))
+                    plt.close()
 
-                    # aggregated mean ± std across omegas
-                    agg = sub.groupby('epsilon')['accuracy'].agg(['mean', 'std']).reset_index()
-                    if not agg.empty:
-                        plt.figure(figsize=(8, 6))
-                        plt.errorbar(agg['epsilon'], agg['mean'], yerr=agg['std'].fillna(0).infer_objects(copy=False), marker='o')
-                        plt.title(f"Last Epoch Accuracy vs. Epsilon (avg over omegas) - param={param_type}")
-                        plt.xlabel('Epsilon')
-                        plt.ylabel('Accuracy')
-                        plt.savefig(os.path.join(figures_dir, f"accuracy_vs_epsilon_agg_param_{param_type}.png"))
-                        plt.close()
-        else:
-            print("No valid accuracy data found for final plots")
+                # aggregated mean ± std across omegas
+                agg = sub.groupby('epsilon')['accuracy'].agg(['mean', 'std']).reset_index()
+                if not agg.empty:
+                    plt.figure(figsize=(8, 6))
+                    plt.errorbar(agg['epsilon'], agg['mean'], yerr=agg['std'].fillna(0).infer_objects(copy=False), marker='o')
+                    plt.title(f"Last Epoch Accuracy vs. Epsilon (avg over omegas) - param={param_type}")
+                    plt.xlabel('Epsilon')
+                    plt.ylabel('Accuracy')
+                    plt.savefig(os.path.join(figures_dir, f"accuracy_vs_epsilon_agg_param_{param_type}.png"))
+                    plt.close()
 
     print(f"Saved figures in: {figures_dir}")
 

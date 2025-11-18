@@ -1,4 +1,5 @@
-# USE: nohup python train_decision_module.py 2 SEVENTH_STUDY WI argmax 0.10 0.05 > logs_train_decision.out 2>&1 &
+# USE: nohup python train_decision_module.py 2 SEVENTH_STUDY WI argmax 0.10 0.05 5000 100 1000 No > logs_train_decision.out 2>&1 &
+
 import os
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
@@ -18,7 +19,7 @@ from little_learner.modules.decision_module.utils import (
 )
 from little_learner.modules.decision_module.train_utils import (
     evaluate_module, update_params, generate_train_dataset,
-    debug_decision_example, init_optimizer_state
+    debug_decision_example
 )
 from little_learner.modules.decision_module.model import decision_model_argmax, decision_model_vector
 
@@ -30,17 +31,19 @@ PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI'
 MODEL_TYPE = str(sys.argv[4]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs
 EPSILON = float(sys.argv[5])  # Noise factor for parameter initialization
 OMEGA = float(sys.argv[6])  # Omega value for loading pre-trained modules
+EPOCHS = int(sys.argv[7]) if len(sys.argv) > 7 else 5000  # Number of training epochs
+BATCH_SIZE = int(sys.argv[8]) if len(sys.argv) > 8 else 100  # Batch size for training
+EPOCH_SIZE = int(sys.argv[9]) if len(sys.argv) > 9 else 1000  # Number of examples per epoch
+FIXED_VARIABILITY = len(sys.argv) > 10 and sys.argv[10].lower() in ['yes', 'true', '1']  # Fixed variability flag (Yes/No)
+TRAINING_DISTRIBUTION_TYPE = str(sys.argv[11]).lower() if len(sys.argv) > 11 else "none"  # Use curriculum learning for training (decreasing_exponential or balanced)
+ALPHA_CURRICULUM = float(sys.argv[12]) if len(sys.argv) > 12 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
 
 # --- Training Parameters ---
-LEARNING_RATE = 0.005
-EPOCHS = 5000
-BATCH_SIZE = 24
+LEARNING_RATE = 0.003
 FINISH_TOLERANCE = 0.0  # Tolerance for stopping training when accuracy reaches 1.0
 SHOW_EVERY_N_EPOCHS = 1
 CHECKPOINT_EVERY = 200
 PARAMS_FILE = None  # Set to None to create new params, or provide a path to load existing params
-TRAINING_DISTRIBUTION_TYPE = "Decreasing_exponential"  # Use curriculum learning for training (Decreasing_exponential or Balanced)
-ALPHA_CURRICULUM = 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "Decreasing_exponential"
 
 # --- General paths ---
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -189,8 +192,10 @@ with open(config_path, "w") as f:
     f.write(f"Learning Rate: {LEARNING_RATE}\n")
     f.write(f"Epochs: {EPOCHS}\n")
     f.write(f"Batch Size: {BATCH_SIZE}\n")
+    f.write(f"Epoch Size: {EPOCH_SIZE}\n")
     f.write(f"Parameters File: {PARAMS_FILE if PARAMS_FILE else 'New parameters generated'}\n")
     f.write(f"Weber fraction (Omega): {OMEGA}\n")
+    f.write(f"Fixed Variability: {'Yes' if FIXED_VARIABILITY else 'No'}\n")
     f.write(f"Unit Extractor imported: {unit_dir}\n")
     f.write(f"Carry Extractor imported: {carry_dir}\n")
     f.write(f"Distribution used for the training set: {TRAINING_DISTRIBUTION_TYPE}\n")
@@ -216,13 +221,6 @@ else:
     except Exception as e:
         print(f"[ERROR] Failed to initialize params: {e}")
         raise
-
-# --- Initialize optimizer and state ---
-#try:
-#    optimizer, opt_state = init_optimizer_state(params, lr=LEARNING_RATE, grad_clip=1.0)
-#except Exception as e:
-#    print(f"[ERROR] Failed to initialize optimizer: {e}")
-#    raise
 
 # Select model function
 if MODEL_TYPE == "vector":
@@ -279,27 +277,24 @@ except Exception as e:
 
 threshold = Decimal('1.0') - Decimal(str(FINISH_TOLERANCE))
 
-for epoch in range(EPOCHS):
-    # Generate training batch with curriculum learning
-    x_train, y_train = generate_train_dataset(train_pairs, BATCH_SIZE, OMEGA, distribution=TRAINING_DISTRIBUTION_TYPE, alpha=ALPHA_CURRICULUM, number_size=NUMBER_SIZE)
-    
-    #debug_decision_example(params, x_train, y_train, unit_module, carry_module, unit_structure=unit_structure, carry_structure=carry_structure, model_fn=model_fn)
+# Calculate batches per epoch based on EPOCH_SIZE
+batches_per_epoch = max(1, EPOCH_SIZE // BATCH_SIZE)
 
-    # Update parameters
-    try:
-        params = update_params(
-            params, x_train, y_train, unit_module, carry_module, LEARNING_RATE, model_fn=model_fn,
-            unit_structure=unit_structure, carry_structure=carry_structure
-        )
-    except Exception as e:
-        print(f"[ERROR] update_params failed at epoch {epoch+1}: {e}")
-        raise
-    # Update parameters using optimizer
-    #params, opt_state = update_params(
-    #    params, opt_state, x_train, y_train, unit_module, carry_module,
-    #    unit_structure=unit_structure, carry_structure=carry_structure,
-    #    model_fn=model_fn, optimizer=optimizer
-    #)
+for epoch in range(EPOCHS):
+    # Train multiple batches per epoch
+    for batch_idx in range(batches_per_epoch):
+        # Generate training batch with curriculum learning
+        x_train, y_train = generate_train_dataset(train_pairs, BATCH_SIZE, OMEGA, distribution=TRAINING_DISTRIBUTION_TYPE, alpha=ALPHA_CURRICULUM, number_size=NUMBER_SIZE, seed=epoch * batches_per_epoch + batch_idx, fixed_variability=FIXED_VARIABILITY)
+        
+        # Update parameters
+        try:
+            params = update_params(
+                params, x_train, y_train, unit_module, carry_module, LEARNING_RATE, model_fn=model_fn,
+                unit_structure=unit_structure, carry_structure=carry_structure
+            )
+        except Exception as e:
+            print(f"[ERROR] update_params failed at epoch {epoch+1}, batch {batch_idx+1}: {e}")
+            raise
     
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
         # Evaluate on test set
@@ -410,3 +405,4 @@ df_results = pd.DataFrame(results)
 
 # --- Save Final Model ---
 save_results_and_module(df_results, final_accuracy, params, SAVE_DIR)
+print('Training complete.')

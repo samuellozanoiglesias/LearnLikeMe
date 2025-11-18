@@ -2,7 +2,7 @@ import os
 import json
 import jax
 import jax.numpy as jnp
-from jax import random
+from jax import random as jrandom
 import pandas as pd
 import pickle
 from sklearn.preprocessing import OneHotEncoder
@@ -73,19 +73,83 @@ def load_initial_params(file_path):
 
 # -------------------- Data Generation --------------------
 # Weber fraction applied when generating data through gaussian noise
-def generate_train_data(omega=0.0, seed=0, module_name=None):
-    x_data = jnp.array([[a, b] for a in range(10) for b in range(10)], dtype=jnp.float32)
+def generate_batch_data(train_pairs, batch_size, omega, seed=0, module_name=None, 
+                       fixed_variability=False, distribution="Balanced", alpha=0.1):
+    """
+    Generate a single batch of training data with curriculum learning.
+    
+    Args:
+        train_pairs: List of all possible training pairs
+        batch_size: Number of samples in the batch
+        omega: Weber fraction for noise
+        seed: Random seed
+        module_name: 'carry_extractor' or 'unit_extractor'
+        fixed_variability: Whether to use fixed standard deviation
+        distribution: 'balanced' or 'decreasing_exponential'
+        alpha: Alpha parameter for exponential decay
+    
+    Returns:
+        Tuple (x_batch, y_batch) for training
+    """    
+    if distribution == "decreasing_exponential":
+        # Use curriculum learning with exponential decay probabilities
+        probabilities = jnp.array([jnp.exp(-alpha * (a + b)) for a, b in train_pairs])
+        probabilities = probabilities / jnp.sum(probabilities)
+        
+        # Sample with replacement according to probabilities
+        rng = jrandom.PRNGKey(seed)
+        indices = jrandom.choice(rng, len(train_pairs), shape=(batch_size,), p=probabilities)
+        selected_pairs = [train_pairs[i] for i in indices]
+    elif distribution == "balanced":
+        # Categorize problems by sum difficulty for balanced sampling
+        small_pairs = [(a, b) for a, b in train_pairs if (a + b) < 7]  # sum < 7
+        medium_pairs = [(a, b) for a, b in train_pairs if 7 <= (a + b) <= 12]  # 7 <= sum <= 12
+        large_pairs = [(a, b) for a, b in train_pairs if (a + b) > 12]  # sum > 12
+        
+        # Sample equally from each category
+        rng = jrandom.PRNGKey(seed)
+        keys = jrandom.split(rng, 3)
+        
+        samples_per_category = batch_size // 3
+        remaining = batch_size % 3
+        
+        small_indices = jrandom.choice(keys[0], len(small_pairs), shape=(samples_per_category,))
+        medium_indices = jrandom.choice(keys[1], len(medium_pairs), shape=(samples_per_category,))
+        large_indices = jrandom.choice(keys[2], len(large_pairs), shape=(samples_per_category,))
+        
+        selected_pairs = ([small_pairs[i] for i in small_indices] + 
+                         [medium_pairs[i] for i in medium_indices] + 
+                         [large_pairs[i] for i in large_indices])
+        
+        # Handle remaining samples
+        if remaining > 0:
+            extra_key = jrandom.split(keys[0], 1)[0]
+            extra_indices = jrandom.choice(extra_key, len(train_pairs), shape=(remaining,))
+            selected_pairs.extend([train_pairs[i] for i in extra_indices])
+    else:
+        # Default: uniform jrandom sampling
+        rng = jrandom.PRNGKey(seed)
+        indices = jrandom.choice(rng, len(train_pairs), shape=(batch_size,))
+        selected_pairs = [train_pairs[i] for i in indices]
+    
+    x_data = jnp.array([[a, b] for a, b in selected_pairs], dtype=jnp.float32)
+    
     if module_name == "carry_extractor":
-        y_data = jnp.array([1 if (a + b) >= 10 else 0 for a in range(10) for b in range(10)], dtype=jnp.int32)
+        y_data = jnp.array([1 if (a + b) >= 10 else 0 for a, b in selected_pairs], dtype=jnp.int32)
     elif module_name == "unit_extractor":
-        y_data = jnp.array([(a + b) % 10 for a in range(10) for b in range(10)], dtype=jnp.int32)
+        y_data = jnp.array([(a + b) % 10 for a, b in selected_pairs], dtype=jnp.int32)
     else:
         raise ValueError("module_name must be 'carry_extractor' or 'unit_extractor'")
     
-    rng = random.PRNGKey(seed)
-    # Generate samples from N(mean=x_data, std=omega*|x_data|)
-    std = omega * jnp.abs(x_data)
-    x_data = x_data + random.normal(rng, shape=x_data.shape) * std
+    # Add noise
+    if omega > 0:
+        noise_rng = jrandom.PRNGKey(seed + 1000)  # Different seed for noise
+        if fixed_variability:
+            std = omega  # Fixed standard deviation
+        else:
+            std = omega * jnp.abs(x_data)  # Variable standard deviation based on magnitude
+        x_data = x_data + jrandom.normal(noise_rng, shape=x_data.shape) * std
+    
     return x_data, y_data
 
 def load_dataset(filepath: str) -> List[Tuple[int, int]]:
@@ -112,11 +176,11 @@ def generate_test_dataset(test_pairs: List[Tuple[int, int]], module_name: str) -
     return jnp.array(x_data), jnp.array(y_data)
 
 # -------------------- One-hot Encoding --------------------
-def one_hot_encode(y, num_classes=None):
+def one_hot_encode(y, num_classes):
     """
     Devuelve un jnp.array denso (float32) de shape (N, num_classes).
     """
-    encoder = OneHotEncoder(categories='auto', sparse_output=False)
+    encoder = OneHotEncoder(categories=[list(range(num_classes))], sparse_output=False)
     y_reshaped = jnp.asarray(y).reshape(-1, 1) 
     y_np = jnp.asarray(y_reshaped).astype('int32')
     y_one_hot = encoder.fit_transform(y_np)
