@@ -1,4 +1,4 @@
-# USE: nohup python analyze_training_extractor_modules.py unit_extractor FOURTH_STUDY > logs_analyze_training_extractor.out &
+# USE: nohup python analyze_training_extractor_modules.py unit_extractor STUDY > logs_analyze_training_extractor.out &
 
 import os
 import sys

@@ -32,7 +32,7 @@ TRAINING_DISTRIBUTION_TYPE = str(sys.argv[6]).lower() if len(sys.argv) > 6 else 
 ALPHA_CURRICULUM = float(sys.argv[7]) if len(sys.argv) > 7 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
 
 # --- Training Parameters ---
-LEARNING_RATE = 0.003
+LEARNING_RATE = 0.005
 PARAMS_FILE = None  # Set to None to create new params, or provide a path to load existing params
 EPOCH_SIZE = 100  # Number of examples per epoch
 
@@ -63,7 +63,7 @@ if MODULE_NAME == "carry_extractor":
     num_classes = 2
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
     EPOCHS = 500  # Carry model uses 500 epochs
-    BATCH_SIZE = 25 
+    BATCH_SIZE = 50
     SHOW_EVERY_N_EPOCHS = 1  # Show accuracy every 1 epochs
     CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs
     structure = [16]  # Carry model hidden layer sizes
@@ -73,7 +73,7 @@ elif MODULE_NAME == "unit_extractor":
     num_classes = 10
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
     EPOCHS = 5000  # Unit model uses 5000 epochs
-    BATCH_SIZE = 25
+    BATCH_SIZE = 50
     SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
     CHECKPOINT_EVERY = 200  # Save checkpoint every 200 epochs
     structure = [128, 64]  # Unit model hidden layer sizes

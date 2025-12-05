@@ -1,4 +1,4 @@
-# USE: nohup python analyze_training_decision_module.py 2 FOURTH_STUDY WI argmax > logs_analysis_training_decision.out 2>&1 &
+# USE: nohup python analyze_training_decision_module.py 2 STUDY WI argmax > logs_analysis_training_decision.out 2>&1 &
 
 import os
 import sys
