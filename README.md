@@ -129,7 +129,7 @@ Lozano, S. (2025). *LearnLikeMe*. GitHub. https://github.com/samuellozanoiglesia
   publisher    = {GitHub},
   url          = {https://github.com/samuellozanoiglesias/LearnLikeMe},
   note         = {Accessed: YYYY-MM-DD}
-}
+}````
 
 ## License
 
