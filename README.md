@@ -115,6 +115,22 @@ A: Yes! Put your data in the `datasets/` folder and update the notebook to use y
 **Q: Where do I find more help?**  
 A: Each notebook and script includes step-by-step comments to guide you. For more details, please read our [CogSci 2025 paper](https://escholarship.org/uc/item/5dt3d93g). If you have questions or need further assistance, feel free to contact Samuel Lozano at samuel.lozano@ucm.es.
 
+## Citation
+
+If you use this repository in your work or project, please cite it as:
+
+Lozano, S. (2025). *LearnLikeMe*. GitHub. https://github.com/samuellozanoiglesias/LearnLikeMe
+
+```bibtex
+@misc{LozanoIglesias2025LearnLikeMe,
+  author       = {Samuel Lozano},
+  title        = {LearnLikeMe},
+  year         = {2025},
+  publisher    = {GitHub},
+  url          = {https://github.com/samuellozanoiglesias/LearnLikeMe},
+  note         = {Accessed: YYYY-MM-DD}
+}
+
 ## License
 
 See the [LICENSE](LICENSE) file for rights and limitations.
