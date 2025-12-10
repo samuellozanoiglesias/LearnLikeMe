@@ -24,19 +24,19 @@ from little_learner.modules.decision_module.train_utils import (
 from little_learner.modules.decision_module.model import decision_model_argmax, decision_model_vector
 
 # --- Config ---
-CLUSTER = "cuenca"  # Cuenca, Brigit or Local
-NUMBER_SIZE = int(sys.argv[1])  # Number of digits in the numbers to be added (2 for two-digit addition)
-STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
-PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
-MODEL_TYPE = str(sys.argv[4]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs
-EPSILON = float(sys.argv[5])  # Noise factor for parameter initialization
-OMEGA = float(sys.argv[6])  # Omega value for loading pre-trained modules
-EPOCHS = int(sys.argv[7]) if len(sys.argv) > 7 else 5000  # Number of training epochs
-BATCH_SIZE = int(sys.argv[8]) if len(sys.argv) > 8 else 100  # Batch size for training
-EPOCH_SIZE = int(sys.argv[9]) if len(sys.argv) > 9 else 1000  # Number of examples per epoch
-FIXED_VARIABILITY = len(sys.argv) > 10 and sys.argv[10].lower() in ['yes', 'true', '1']  # Fixed variability flag (Yes/No)
-TRAINING_DISTRIBUTION_TYPE = str(sys.argv[11]).lower() if len(sys.argv) > 11 else "none"  # Use curriculum learning for training (decreasing_exponential or balanced)
-ALPHA_CURRICULUM = float(sys.argv[12]) if len(sys.argv) > 12 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
+CLUSTER = str(sys.argv[1]).lower()  # Cuenca, Brigit or Local
+NUMBER_SIZE = int(sys.argv[2])  # Number of digits in the numbers to be added (2 for two-digit addition)
+STUDY_NAME = str(sys.argv[3]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+PARAM_TYPE = str(sys.argv[4]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
+MODEL_TYPE = str(sys.argv[5]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs
+EPSILON = float(sys.argv[6])  # Noise factor for parameter initialization
+OMEGA = float(sys.argv[7])  # Omega value for loading pre-trained modules
+EPOCHS = int(sys.argv[8]) if len(sys.argv) > 8 else 5000  # Number of training epochs
+BATCH_SIZE = int(sys.argv[9]) if len(sys.argv) > 9 else 100  # Batch size for training
+EPOCH_SIZE = int(sys.argv[10]) if len(sys.argv) > 10 else 1000  # Number of examples per epoch
+FIXED_VARIABILITY = len(sys.argv) > 11 and sys.argv[11].lower() in ['yes', 'true', '1']  # Fixed variability flag (Yes/No)
+TRAINING_DISTRIBUTION_TYPE = str(sys.argv[12]).lower() if len(sys.argv) > 12 else "none"  # Use curriculum learning for training (decreasing_exponential or balanced)
+ALPHA_CURRICULUM = float(sys.argv[13]) if len(sys.argv) > 13 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
 
 # --- Training Parameters ---
 LEARNING_RATE = 0.003

@@ -107,28 +107,6 @@ nohup python analyze_test_decision_module.py WI argmax > logs_analysis_test_deci
 ## Frequently Asked Questions
 
 **Q: Do I need to know Python?**  
-A: No! Just follow the steps above and use the scripts and notebooks.
-
-**Q: Can I use my own data?**  
-A: Yes! Put your data in the `datasets/` folder and update the notebook or script to use your file.
-
-**Q: Where do I find more help?**  
-A: Each notebook and script has step-by-step comments. For more details, see our [paper](https://escholarship.org/uc/item/5dt3d93g).
-
-## License
-
-See the [LICENSE](LICENSE) file for rights and limitations.
-
-## Project Structure (What’s inside?)
-
-- `little_learner/`: Core code for the neural modules (no need to edit for basic use)
-- `datasets/`: All the data for training/testing
-- `CogSci_version/`: Notebooks for different arithmetic tasks and analyses
-- `JAX_MODULES-*`: Advanced implementations (for programmers)
-
-## Frequently Asked Questions
-
-**Q: Do I need to know Python?**  
 A: No! Just follow the steps above and use the notebooks.
 
 **Q: Can I use my own data?**  

@@ -12,12 +12,12 @@ plt.rcParams['mathtext.fontset'] = 'stix'
 plt.rcParams['font.family'] = 'STIXGeneral'
 
 # --- Config ---
-CLUSTER = "cuenca"  # Cuenca, Brigit or Local
+CLUSTER = "brigit"  # Cuenca, Brigit or Local
 NUMBER_SIZE = int(sys.argv[1])  # Number of digits in the numbers to be added (2 for two-digit addition)
 STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
 MODEL_TYPE = str(sys.argv[4]).lower()  # 'argmax' or 'vector' version of the decision module
-XLIMS = [1000, 2000, 4000]  # X-axis limit for the plots
+XLIMS = [1000, 2000]  # X-axis limit for the plots
 
 # Hardcoded omega values to plot
 OMEGA_VALUES = [0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]
@@ -58,7 +58,7 @@ def analyze_multidigit_module(raw_dir, figures_dir):
     print(f"After cleaning: {len(combined_logs)} rows remaining")
         
     # Create single figure with lines for each hardcoded omega
-    plt.figure(figsize=(16, 8))
+    plt.figure(figsize=(12, 6))
     
     colors = plt.cm.viridis(np.linspace(0, 1, len(OMEGA_VALUES)))
     colors = colors[::-1]  # Reverse colors for better visibility
@@ -92,23 +92,23 @@ def analyze_multidigit_module(raw_dir, figures_dir):
                        epoch_stats['smoothed_error'] + epoch_stats['std'],
                        color=colors[i], alpha=0.2)
     
-    plt.xlabel('Epoch', fontsize=30)
-    plt.ylabel('Averaged Error (%)', fontsize=30)
+    plt.xlabel('Batch', fontsize=32)
+    plt.ylabel('Averaged Error (%)', fontsize=32)
     plt.legend(loc='center right', 
                bbox_to_anchor=(1.32, 0.5), 
                title='Magnitude Noise', 
-               fontsize=28, 
-               title_fontsize=30
+               fontsize=30, 
+               title_fontsize=32
                )
-    plt.grid(True, color='gray', alpha=0.7)
-    plt.ylim(-1, 101)
-    plt.xticks(fontsize=26)
-    plt.yticks(fontsize=26)
+    plt.grid(axis="y", linestyle="--", linewidth=1, color="gray", alpha=0.7)
+    plt.ylim(-5, 105)
+    plt.xticks(fontsize=28)
+    plt.yticks(fontsize=28)
     
     # Save the figure
     for XLIM in XLIMS:
         plt.xlim(0, XLIM)
-        output_filename = f"error_by_omega_{STUDY_NAME}_{PARAM_TYPE}_{MODEL_TYPE}_{XLIM}.png"
+        output_filename = f"error_by_omega_for_{XLIM}_epochs.png"
         output_path = os.path.join(figures_dir, output_filename)
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         

@@ -8,7 +8,7 @@ import seaborn as sns
 import numpy as np
 
 # --- Config ---
-CLUSTER = "cuenca"  # Cuenca, Brigit or Local
+CLUSTER = "brigit"  # Cuenca, Brigit or Local
 NUMBER_SIZE = int(sys.argv[1])  # Number of digits in the numbers to be added (2 for two-digit addition)
 STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)

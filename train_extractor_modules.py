@@ -1,4 +1,4 @@
-# USE: nohup python train_extractor_modules.py unit_extractor THIRD_STUDY-NO_AVERAGED_OMEGA 0.05 No Yes Decreasing_exponential 0.1 > logs_train_extractor.out 2>&1 &
+# USE: nohup python train_extractor_modules.py unit_extractor THIRD_STUDY-NO_AVERAGED_OMEGA 0.50 0.05 No Yes Decreasing_exponential 0.1 > logs_train_extractor.out 2>&1 &
 import os
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
@@ -22,17 +22,18 @@ from little_learner.modules.extractor_modules.train_utils import (
 )
 
 # --- Config ---
-CLUSTER = "cuenca" # Cuenca, Brigit or Local
-MODULE_NAME = sys.argv[1].lower()  # unit_extractor or carry_extractor
-STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
-OMEGA = float(sys.argv[3])  # Weber fraction (~0.2) for gaussian noise, if applicable
-FIXED_VARIABILITY = len(sys.argv) > 4 and sys.argv[4].lower() in ['yes', 'true', '1']  # Fixed variability flag (Yes/No)
-EARLY_STOP = len(sys.argv) > 5 and sys.argv[5].lower() in ['yes', 'true', '1']  # Early stopping flag (Yes/No)
-TRAINING_DISTRIBUTION_TYPE = str(sys.argv[6]).lower() if len(sys.argv) > 6 else "none"  # Use curriculum learning for training (Decreasing_exponential or Balanced)
-ALPHA_CURRICULUM = float(sys.argv[7]) if len(sys.argv) > 7 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
+CLUSTER = str(sys.argv[1]).lower() # Cuenca, Brigit or Local
+MODULE_NAME = sys.argv[2].lower()  # unit_extractor or carry_extractor
+STUDY_NAME = str(sys.argv[3]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+EPSILON = float(sys.argv[4])  # Noise factor for parameter initialization
+OMEGA = float(sys.argv[5])  # Weber fraction (~0.2) for gaussian noise, if applicable
+FIXED_VARIABILITY = len(sys.argv) > 6 and sys.argv[6].lower() in ['yes', 'true', '1']  # Fixed variability flag (Yes/No)
+EARLY_STOP = len(sys.argv) > 7 and sys.argv[7].lower() in ['yes', 'true', '1']  # Early stopping flag (Yes/No)
+TRAINING_DISTRIBUTION_TYPE = str(sys.argv[8]).lower() if len(sys.argv) > 8 else "none"  # Use curriculum learning for training (Decreasing_exponential or Balanced)
+ALPHA_CURRICULUM = float(sys.argv[9]) if len(sys.argv) > 9 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
 
 # --- Training Parameters ---
-LEARNING_RATE = 0.005
+LEARNING_RATE = 0.003
 PARAMS_FILE = None  # Set to None to create new params, or provide a path to load existing params
 EPOCH_SIZE = 100  # Number of examples per epoch
 
@@ -63,7 +64,7 @@ if MODULE_NAME == "carry_extractor":
     num_classes = 2
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
     EPOCHS = 500  # Carry model uses 500 epochs
-    BATCH_SIZE = 50
+    BATCH_SIZE = 25
     SHOW_EVERY_N_EPOCHS = 1  # Show accuracy every 1 epochs
     CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs
     structure = [16]  # Carry model hidden layer sizes
@@ -73,7 +74,7 @@ elif MODULE_NAME == "unit_extractor":
     num_classes = 10
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
     EPOCHS = 5000  # Unit model uses 5000 epochs
-    BATCH_SIZE = 50
+    BATCH_SIZE = 25
     SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
     CHECKPOINT_EVERY = 200  # Save checkpoint every 200 epochs
     structure = [128, 64]  # Unit model hidden layer sizes
@@ -111,6 +112,7 @@ with open(config_path, "w") as f:
     f.write(f"Early Stop: {'Yes' if EARLY_STOP else 'No'}\n")
     f.write(f"Training Distribution Type: {TRAINING_DISTRIBUTION_TYPE}\n")
     f.write(f"Alpha for curriculum learning: {ALPHA_CURRICULUM}\n")
+    f.write(f"Noise Factor for Initialization Parameters (Epsilon): {EPSILON}\n")
     f.write(f"Finish Tolerance: {FINISH_TOLERANCE}\n")
     f.write(f"Epoch Size: {EPOCH_SIZE}\n")
     f.write(f"Batches per epoch: {max(1, EPOCH_SIZE // BATCH_SIZE)}\n")
@@ -130,7 +132,7 @@ else:
     PARAMS_FILE = os.path.join(PARAMS_DIR, f"initial_params_{timestamp}.json")
     rng = random.PRNGKey(42)
     input_shape = (1, 2)  # (batch_size, 2 features for a and b)
-    initial_params = create_and_save_initial_params(model, rng, input_shape, PARAMS_FILE)
+    initial_params = create_and_save_initial_params(model, rng, input_shape, PARAMS_FILE, epsilon=EPSILON)
 
 state = load_train_state(model, LEARNING_RATE, initial_params)
 
