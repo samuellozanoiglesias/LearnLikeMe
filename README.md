@@ -427,4 +427,16 @@ For questions about:
 
 ## 📜 License
 
-See the [LICENSE](LICENSE) file for rights and limitations.
+See the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+This research was supported by:
+- Universidad Complutense de Madrid
+- Fundación Ramón Areces
+- Residencia de Estudiantes
+- Human Frontier Science Project (HFSP)
+
+Special thanks to Markus Sptitzer, Korbinian Moeller and Miguel Ruiz-Garcia for their guidance and contributions to this work.
+
+**Keywords**: Neural Networks, Arithmetic Cognition, Curriculum Learning, Cognitive Modeling, Symbolic Processing, Modular Neural Networks, JAX, Flax
