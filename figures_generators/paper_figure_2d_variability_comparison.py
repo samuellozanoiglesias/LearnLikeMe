@@ -134,7 +134,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, return_data=False):
 
     ax.set_xlabel('Magnitude Noise (ω)', fontsize=30)
     ax.set_ylabel('Initialization (ε)', fontsize=30)
-    ax.set_zlabel('Averaged Error (%)', fontsize=30)
+    ax.set_zlabel('Mean Error Rate (%)', fontsize=30)
 
     ax.tick_params(axis='x', labelsize=26)
     ax.tick_params(axis='y', labelsize=26)
@@ -182,7 +182,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, return_data=False):
                                 alpha=0.25, color=colors[i])
         
         ax2.set_xlabel('Magnitude Noise (ω)', fontsize=24)
-        ax2.set_ylabel('Averaged Error (%)', fontsize=24)
+        ax2.set_ylabel('Mean Error Rate (%)', fontsize=24)
         ax2.tick_params(axis='both', labelsize=20)
         ax2.grid(True, alpha=0.3)
         ax2.set_ylim(0, 100)
@@ -250,7 +250,7 @@ def create_comparison_plot(study1_name, study2_name, omega_stats1, omega_stats2,
                        alpha=0.2, color=color2)
     
     ax.set_xlabel('Magnitude Noise (ω)', fontsize=32)
-    ax.set_ylabel('Averaged Error (%)', fontsize=32)
+    ax.set_ylabel('Mean Error Rate (%)', fontsize=32)
     ax.tick_params(axis='both', labelsize=28)
     ax.grid(True, alpha=0.3)
     ax.set_ylim(-5, 105)

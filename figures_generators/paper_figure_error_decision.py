@@ -93,7 +93,7 @@ def analyze_multidigit_module(raw_dir, figures_dir):
                        color=colors[i], alpha=0.2)
     
     plt.xlabel('Batch', fontsize=32)
-    plt.ylabel('Averaged Error (%)', fontsize=32)
+    plt.ylabel('Mean Error Rate (%)', fontsize=32)
     plt.legend(loc='center right', 
                bbox_to_anchor=(1.32, 0.5), 
                title='Magnitude Noise', 

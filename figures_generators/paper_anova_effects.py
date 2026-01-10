@@ -14,7 +14,7 @@ PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI'
 MODEL_TYPE = str(sys.argv[4]).lower()  # 'argmax' or 'vector' version of the decision module
 OMEGA_VALUE = float(sys.argv[5])  # Specific omega value to analyze
 EPOCH = int(sys.argv[6]) if len(sys.argv) > 6 else "last"  # Specific epoch for analysis
-N_REPETITIONS_PER_SAMPLE = 5 # Number of repetitions averaged per accuracy value (e.g., 10)
+N_REPETITIONS_PER_SAMPLE = 2 # Number of repetitions averaged per accuracy value (e.g., 10)
 
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""

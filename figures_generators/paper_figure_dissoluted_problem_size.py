@@ -1,4 +1,4 @@
-# USE: nohup python paper_figure_dissoluted_problem_size.py 2 STUDY1 STUDY2 WI argmax 0.10 > logs_paper_effects.out 2>&1 &
+# USE: nohup python paper_figure_dissoluted_problem_size.py 2 STUDY1 STUDY2 WI argmax 0.10 > logs_paper_dissoluted_problem_size.out 2>&1 &
 
 import os
 import sys
@@ -174,7 +174,7 @@ def plot_study_data(ax, pw, study_title, is_upper=False):
     else:
         ax.set_xlabel('Batch', fontsize=32)
     
-    ax.set_ylabel('Averaged Error (%)', fontsize=32)
+    ax.set_ylabel('Mean Error Rate (%)', fontsize=32)
     ax.set_ylim(-5, 105)
     ax.tick_params(axis='both', labelsize=28)
     ax.legend(loc='best', fontsize=32)

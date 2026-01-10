@@ -112,7 +112,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             plt.fill_between(idx, error_mean - error_std, error_mean + error_std, color=colcol, alpha=0.2)
         
         plt.xlabel('Batch', fontsize=32)
-        plt.ylabel('Averaged Error (%)', fontsize=32)
+        plt.ylabel('Mean Error Rate (%)', fontsize=32)
         plt.ylim(-5, 105)
         plt.tick_params(axis='both', labelsize=28)
         plt.legend(loc='best', fontsize=30)
@@ -165,7 +165,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             bars = ax.bar(x_positions, means, yerr=np.sqrt(stds), capsize=5, color=colors, 
                          alpha=0.8, edgecolor='black', linewidth=1.5, width=0.7)
             
-            ax.set_ylabel('Averaged Error (%)', fontsize=32)
+            ax.set_ylabel('Mean Error Rate (%)', fontsize=32)
             ax.set_xticks([0.4, 2.6])
             ax.set_xticklabels(['Small', 'Large'], fontsize=28)
             ax.set_xlabel('Problem Size', fontsize=32)
@@ -193,9 +193,9 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
                          alpha=0.8, edgecolor='black', linewidth=1.5, width=0.7)
             
             # Experimental reaction times data
-            min_RT = 1000  # Minimum RT for scaling
-            max_RT = 6250  # Maximum RT for scaling
-            rt_values = [1500, 1900, 2600, 3200]  # RT(SNC), RT(SC), RT(LNC), RT(LC)
+            min_RT = 1250  # Minimum RT for scaling
+            max_RT = 4137.5  # Maximum RT for scaling
+            rt_values = [1400, 1800, 2700, 3200]  # RT(SNC), RT(SC), RT(LNC), RT(LC)
             
             # Create secondary y-axis for reaction times
             ax2 = ax.twinx()
@@ -208,9 +208,9 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             
             # Plot experimental data as black stars on the primary axis
             ax.scatter(x_positions, rt_normalized, marker='*', s=500, color='green', edgecolors='darkgreen', linewidth=1, 
-                      zorder=5, label='Experimental Reaction Times')
+                      zorder=5, label='Experimental RTs')
             
-            ax.set_ylabel('Averaged Error (%)', fontsize=32)
+            ax.set_ylabel('Mean Error Rate (%)', fontsize=32)
             ax.set_xticks([0.4, 2.6])
             ax.set_xticklabels(['Small', 'Large'], fontsize=28)
             ax.set_xlabel('Problem Size', fontsize=32)
@@ -225,7 +225,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
                 Patch(facecolor=colors[2], edgecolor='black', label='Large - No Carry', alpha=0.8),
                 Patch(facecolor=colors[3], edgecolor='black', label='Large - Carry', alpha=0.8),
                 Line2D([0], [0], marker='*', color='w', markerfacecolor='green', markeredgecolor='darkgreen',
-                       markersize=15, label='Experimental Reaction Times')
+                       markersize=15, label='Experimental RTs')
             ]
             ax.legend(handles=legend_elements_with_rt, loc='upper left', fontsize=32, framealpha=0.95)
             

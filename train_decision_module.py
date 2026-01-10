@@ -42,7 +42,7 @@ ALPHA_CURRICULUM = float(sys.argv[13]) if len(sys.argv) > 13 else 0.1  # Only us
 LEARNING_RATE = 0.003
 FINISH_TOLERANCE = 0.0  # Tolerance for stopping training when accuracy reaches 1.0
 SHOW_EVERY_N_EPOCHS = 1
-CHECKPOINT_EVERY = 200
+CHECKPOINT_EVERY = 10
 PARAMS_FILE = None  # Set to None to create new params, or provide a path to load existing params
 
 # --- General paths ---

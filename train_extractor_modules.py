@@ -25,7 +25,7 @@ from little_learner.modules.extractor_modules.train_utils import (
 CLUSTER = str(sys.argv[1]).lower() # Cuenca, Brigit or Local
 MODULE_NAME = sys.argv[2].lower()  # unit_extractor or carry_extractor
 STUDY_NAME = str(sys.argv[3]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
-EPSILON = float(sys.argv[4])  # Noise factor for parameter initialization
+EPSILON = float(sys.argv[4]) if sys.argv[4] != "None" else None  # Noise factor for parameter initialization
 OMEGA = float(sys.argv[5])  # Weber fraction (~0.2) for gaussian noise, if applicable
 FIXED_VARIABILITY = len(sys.argv) > 6 and sys.argv[6].lower() in ['yes', 'true', '1']  # Fixed variability flag (Yes/No)
 EARLY_STOP = len(sys.argv) > 7 and sys.argv[7].lower() in ['yes', 'true', '1']  # Early stopping flag (Yes/No)
@@ -66,17 +66,17 @@ if MODULE_NAME == "carry_extractor":
     EPOCHS = 500  # Carry model uses 500 epochs
     BATCH_SIZE = 25
     SHOW_EVERY_N_EPOCHS = 1  # Show accuracy every 1 epochs
-    CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs
+    CHECKPOINT_EVERY = 1  # Save checkpoint every 1 epochs
     structure = [16]  # Carry model hidden layer sizes
     output_dim = 2  # Carry model output dimension (carry or no carry)
 
 elif MODULE_NAME == "unit_extractor":
     num_classes = 10
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
-    EPOCHS = 5000  # Unit model uses 5000 epochs
+    EPOCHS = 10  # Unit model uses 5000 epochs
     BATCH_SIZE = 25
     SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
-    CHECKPOINT_EVERY = 200  # Save checkpoint every 200 epochs
+    CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs
     structure = [128, 64]  # Unit model hidden layer sizes
     output_dim = 10  # Unit model output dimension (0-9)
 

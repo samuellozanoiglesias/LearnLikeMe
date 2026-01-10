@@ -39,7 +39,7 @@ def save_results_and_module(df_results, final_accuracy, model_params, save_dir, 
     return save_dir
 
 # -------------------- Parameter Utilities --------------------
-def create_and_save_initial_params(model, rng, input_shape, file_path, epsilon=0.01):
+def create_and_save_initial_params(model, rng, input_shape, file_path, epsilon=None):
     """
     Initialize model parameters from a Gaussian distribution N(0, epsilon^2).
     
@@ -56,19 +56,20 @@ def create_and_save_initial_params(model, rng, input_shape, file_path, epsilon=0
     # First get the structure from default initialization
     params = model.init(rng, jnp.ones(input_shape))["params"]
     
-    # Replace all parameters with Gaussian N(0, epsilon^2)
-    rng, *param_rngs = jrandom.split(rng, len(jax.tree_util.tree_leaves(params)) + 1)
+    if epsilon is not None:
+        # Replace all parameters with Gaussian N(0, epsilon^2)
+        rng, *param_rngs = jrandom.split(rng, len(jax.tree_util.tree_leaves(params)) + 1)
+        
+        def gaussian_init(param, rng_key):
+            """Initialize parameter from Gaussian N(0, epsilon^2)"""
+            return jrandom.normal(rng_key, shape=param.shape) * epsilon
     
-    def gaussian_init(param, rng_key):
-        """Initialize parameter from Gaussian N(0, epsilon^2)"""
-        return jrandom.normal(rng_key, shape=param.shape) * epsilon
-    
-    # Apply Gaussian initialization to all parameters
-    param_rngs_iter = iter(param_rngs)
-    params = jax.tree_util.tree_map(
-        lambda x: gaussian_init(x, next(param_rngs_iter)), 
-        params
-    )
+        # Apply Gaussian initialization to all parameters
+        param_rngs_iter = iter(param_rngs)
+        params = jax.tree_util.tree_map(
+            lambda x: gaussian_init(x, next(param_rngs_iter)), 
+            params
+        )
 
     def to_serializable(obj):
         if isinstance(obj, dict):
@@ -169,6 +170,8 @@ def generate_batch_data(train_pairs, batch_size, omega, seed=0, module_name=None
     else:
         raise ValueError("module_name must be 'carry_extractor' or 'unit_extractor'")
     
+    print(f'Original x_data: {x_data}')
+
     # Add noise
     if omega > 0:
         noise_rng = jrandom.PRNGKey(seed + 1000)  # Different seed for noise
@@ -177,7 +180,9 @@ def generate_batch_data(train_pairs, batch_size, omega, seed=0, module_name=None
         else:
             std = omega * jnp.abs(x_data)  # Variable standard deviation based on magnitude
         x_data = x_data + jrandom.normal(noise_rng, shape=x_data.shape) * std
-    
+
+    print(f'Fixed variability: {fixed_variability}, std: {std}')
+    print(f'Modified x_data: {x_data}')
     return x_data, y_data
 
 def load_dataset(filepath: str) -> List[Tuple[int, int]]:
