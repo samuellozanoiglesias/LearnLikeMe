@@ -170,8 +170,6 @@ def generate_batch_data(train_pairs, batch_size, omega, seed=0, module_name=None
     else:
         raise ValueError("module_name must be 'carry_extractor' or 'unit_extractor'")
     
-    print(f'Original x_data: {x_data}')
-
     # Add noise
     if omega > 0:
         noise_rng = jrandom.PRNGKey(seed + 1000)  # Different seed for noise
@@ -181,8 +179,6 @@ def generate_batch_data(train_pairs, batch_size, omega, seed=0, module_name=None
             std = omega * jnp.abs(x_data)  # Variable standard deviation based on magnitude
         x_data = x_data + jrandom.normal(noise_rng, shape=x_data.shape) * std
 
-    print(f'Fixed variability: {fixed_variability}, std: {std}')
-    print(f'Modified x_data: {x_data}')
     return x_data, y_data
 
 def load_dataset(filepath: str) -> List[Tuple[int, int]]:

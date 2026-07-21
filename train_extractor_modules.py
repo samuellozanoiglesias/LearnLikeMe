@@ -1,4 +1,8 @@
-# USE: nohup python train_extractor_modules.py unit_extractor THIRD_STUDY-NO_AVERAGED_OMEGA 0.50 0.05 No Yes Decreasing_exponential 0.1 > logs_train_extractor.out 2>&1 &
+# USE: 
+#  
+# nohup python train_extractor_modules.py unit_extractor THIRD_STUDY-NO_AVERAGED_OMEGA 0.50 0.05 No Yes Decreasing_exponential 0.1 > logs_train_extractor.out 2>&1 &
+
+
 import os
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 
@@ -73,7 +77,7 @@ if MODULE_NAME == "carry_extractor":
 elif MODULE_NAME == "unit_extractor":
     num_classes = 10
     FINISH_TOLERANCE = 0.00  # Tolerance for stopping training when accuracy reaches 1.0
-    EPOCHS = 10  # Unit model uses 5000 epochs
+    EPOCHS = 5000  # Unit model uses 5000 epochs
     BATCH_SIZE = 25
     SHOW_EVERY_N_EPOCHS = 5  # Show accuracy every 5 epochs
     CHECKPOINT_EVERY = 10  # Save checkpoint every 10 epochs

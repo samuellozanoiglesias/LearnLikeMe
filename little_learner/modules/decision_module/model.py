@@ -78,6 +78,102 @@ def decision_model_argmax(params: dict, x: jnp.ndarray,
     return outputs
 
 
+# Fixed (not annealed) temperature for the straight-through estimator below.
+#
+# IMPORTANT: the forward pass is exactly jnp.argmax at ANY temperature (the
+# stop_gradient trick guarantees this exactly, not approximately) -- so
+# temperature does NOT trade off "closeness to argmax" against anything.
+# It only controls how peaked the backward-pass softmax is. A LOW
+# temperature makes the softmax saturate almost immediately once the
+# extractor's logits are even mildly confident (a gap of ~1.0 between top-2
+# logits is enough), which drives the gradient back toward ~0 in float32 --
+# i.e. a low temperature reintroduces the exact vanishing-gradient problem
+# this estimator exists to avoid. Empirically (see conversation), T=0.1
+# gives essentially zero gradient as soon as the network is "moderately
+# confident", well before real training convergence, while T=1.0 keeps
+# gradient magnitude comparable across near-uniform, moderately confident,
+# and highly confident logits. So T=1.0 (plain softmax, no rescaling) is
+# used here, not a small value -- if gradients still vanish once the
+# extractors are well-trained and highly confident, raise this further
+# rather than lowering it.
+STRAIGHT_THROUGH_TEMPERATURE = 1.0
+
+
+def decision_model_straight_through(params: dict, x: jnp.ndarray,
+                                    unit_module: dict, carry_module: dict,
+                                    unit_structure=[256, 128], carry_structure=[16]) -> tuple:
+    """
+    Straight-through (ST) estimator version of decision_model_argmax.
+
+    Forward pass: numerically IDENTICAL to decision_model_argmax. Each
+    digit-pair's carry/unit feature is exactly jnp.argmax(logits) -- same
+    hard integer index (0/1 for carry, 0-9 for unit), same feature layout,
+    same dense_i readout. Nothing about the model's predictions changes.
+
+    Backward pass: instead of differentiating through jnp.argmax (which is
+    zero a.e. and thus gives unit_module/carry_module -- and, under
+    TRAIN_MODE='all', the upstream extractor params -- exactly zero
+    gradient, as in decision_model_argmax), the gradient is computed through
+    a soft "expected index" = sum_i(i * softmax(logits / T)_i). This is a
+    genuine differentiable proxy for the index that argmax returns, so
+    gradients flow continuously back into the extractor logits instead of
+    vanishing.
+
+    Combined via the standard ST trick:
+        index = stop_gradient(hard_index - soft_index) + soft_index
+    Forward value: hard_index (since the stop_gradient term cancels
+    numerically). Backward gradient: d(soft_index)/d(logits) only.
+
+    Fixed, un-annealed temperature (STRAIGHT_THROUGH_TEMPERATURE) is used
+    throughout training -- no Gumbel noise, no scheduling -- to keep this a
+    direct, deterministic drop-in replacement for the argmax path rather
+    than a separate stochastic training regime. Note temperature does NOT
+    change how "argmax-like" the forward pass is (that part is exact at any
+    temperature) -- it only controls the backward gradient's magnitude; see
+    the comment above STRAIGHT_THROUGH_TEMPERATURE for why it's set to 1.0
+    rather than a small value.
+    """
+    number_size = x.shape[1] // 2
+    idx_i = jnp.arange(number_size)
+    idx_j = jnp.arange(number_size, 2 * number_size)
+    pairs = jnp.array([(i, j) for i in idx_i for j in idx_j])
+    single_digit_inputs = x[:, pairs].reshape(x.shape[0], -1, 2)
+    num_pairs = single_digit_inputs.shape[1]
+
+    def _st_index(logits: jnp.ndarray, num_classes: int) -> jnp.ndarray:
+        """logits: (batch, num_classes) raw extractor output for one pair.
+        Returns (batch,): forward == jnp.argmax(logits), backward gradient
+        flows through the temperature-scaled softmax expectation instead."""
+        soft = jax.nn.softmax(logits / STRAIGHT_THROUGH_TEMPERATURE, axis=-1)
+        class_idx = jnp.arange(num_classes, dtype=soft.dtype)
+        soft_index = jnp.sum(soft * class_idx, axis=-1)
+        hard_index = jnp.argmax(logits, axis=-1).astype(soft.dtype)
+        return jax.lax.stop_gradient(hard_index - soft_index) + soft_index
+
+    carry_outputs = jnp.stack([
+        _st_index(
+            ExtractorModel(structure=carry_structure, output_dim=2).apply({'params': carry_module}, single_digit_inputs[:, k]),
+            num_classes=2
+        )
+        for k in range(num_pairs)
+    ], axis=1)
+    unit_outputs = jnp.stack([
+        _st_index(
+            ExtractorModel(structure=unit_structure, output_dim=10).apply({'params': unit_module}, single_digit_inputs[:, k]),
+            num_classes=10
+        )
+        for k in range(num_pairs)
+    ], axis=1)
+
+    # Concatenate features: shape (batch, num_pairs * 2) -- identical layout
+    # to decision_model_argmax's concat_features.
+    concat_features = jnp.concatenate([carry_outputs, unit_outputs], axis=1)
+    outputs = jnp.stack([
+        jnp.dot(concat_features, params[f'dense_{i}']) for i in range(number_size + 1)
+    ], axis=1)
+    return outputs
+
+
 # -------------------- Legacy Decision Module ---------------- #
 
 def OLD_decision_model_vector(params: dict, x: jnp.ndarray, unit_module: dict, carry_module: dict,

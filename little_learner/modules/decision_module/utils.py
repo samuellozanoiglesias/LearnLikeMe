@@ -33,16 +33,19 @@ def initialize_decision_params(
     Returns:
         Dictionary containing decision network parameters
     """
-    if model_type.lower() == 'argmax':
-        unit_dim = 1  # argmax output dimension for units
-        carry_dim = 1 # argmax output dimension for carry
-        fixed_value = 1 # fixed value for argmax correct params
+    if model_type.lower() in ('argmax', 'straight_through'):
+        # 'straight_through' produces the exact same forward feature shape as
+        # 'argmax' (one scalar hard index per pair, per carry/unit module) --
+        # only its backward gradient differs -- so it reuses argmax's dims.
+        unit_dim = 1  # argmax/straight_through output dimension for units
+        carry_dim = 1 # argmax/straight_through output dimension for carry
+        fixed_value = 1 # fixed value for argmax/straight_through correct params
     elif model_type.lower() == 'vector':
         unit_dim = 10 # vector output dimension for units (0-9)
         carry_dim = 2 # vector output dimension for carry (0 or 1)
         fixed_value = None # no fixed value for vector correct params
     else:
-        raise ValueError("model_type must be either 'argmax' or 'vector'")
+        raise ValueError("model_type must be 'argmax', 'vector', or 'straight_through'")
 
     # Define feature size (for 4 pairs, each with unit/carry, e.g. 4*unit_dim + 4*carry_dim)
     feature_size = (unit_dim + carry_dim) * number_size ** 2 # number size ** number_of_addends * (unit + carry) per pair of single-digits

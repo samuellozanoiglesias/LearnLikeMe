@@ -173,5 +173,3 @@ cython_debug/
 *.out
 input*
 output*
-brigit*
-cuenca*

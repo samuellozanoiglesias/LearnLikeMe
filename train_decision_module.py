@@ -1,4 +1,26 @@
 # USE: nohup python train_decision_module.py 2 SEVENTH_STUDY WI argmax 0.10 0.05 5000 100 1000 No > logs_train_decision.out 2>&1 &
+#
+# Optional 14th positional argument, TRAIN_MODE, controls what gets trained:
+#   - "decision_only" (default, same behavior as before): only the decision
+#     module's params receive gradient updates; unit/carry extractor modules
+#     are loaded once and stay frozen for the whole run.
+#   - "all": unit/carry extractor modules are unfrozen and fine-tuned jointly
+#     with the decision module (everything trains together, from whatever
+#     checkpoint load_extractor_module() loaded).
+# Full 14-arg example (retrain everything -- extractors unfrozen too):
+#   nohup python train_decision_module.py cuenca 2 SEVENTH_STUDY WI argmax 0.10 0.05 5000 100 1000 No none 0.1 all \
+#       > logs_train_decision.out 2>&1 &
+# (positions: CLUSTER NUMBER_SIZE STUDY_NAME PARAM_TYPE MODEL_TYPE EPSILON OMEGA EPOCHS BATCH_SIZE EPOCH_SIZE
+#  FIXED_VARIABILITY TRAINING_DISTRIBUTION_TYPE ALPHA_CURRICULUM TRAIN_MODE)
+#
+# MODEL_TYPE choices:
+#   - "vector": full softmax probability vectors from unit/carry extractors feed the decision layer.
+#   - "argmax": hard jnp.argmax index feeds the decision layer -- discrete, but zero gradient into
+#     unit_module/carry_module (and, under TRAIN_MODE=all, into the extractors upstream of them).
+#   - "straight_through": same hard forward output as "argmax" (numerically identical predictions),
+#     but gradients flow through a temperature-scaled soft expected-index instead of vanishing at
+#     the argmax. This is the model type to use for a genuine "discrete but still trainable"
+#     TRAIN_MODE=all run -- see little_learner/modules/decision_module/model.py for details.
 
 import os
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
@@ -19,16 +41,18 @@ from little_learner.modules.decision_module.utils import (
 )
 from little_learner.modules.decision_module.train_utils import (
     evaluate_module, update_params, generate_train_dataset,
-    debug_decision_example
+    debug_decision_example, compute_loss
 )
-from little_learner.modules.decision_module.model import decision_model_argmax, decision_model_vector
+from little_learner.modules.decision_module.model import decision_model_argmax, decision_model_vector, decision_model_straight_through
 
 # --- Config ---
 CLUSTER = str(sys.argv[1]).lower()  # Cuenca, Brigit or Local
 NUMBER_SIZE = int(sys.argv[2])  # Number of digits in the numbers to be added (2 for two-digit addition)
 STUDY_NAME = str(sys.argv[3]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 PARAM_TYPE = str(sys.argv[4]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
-MODEL_TYPE = str(sys.argv[5]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs
+MODEL_TYPE = str(sys.argv[5]).lower() # "argmax" for argmax outputs, "vector" for probability vector outputs, "straight_through" for ST-relaxed argmax
+if MODEL_TYPE not in ("argmax", "vector", "straight_through"):
+    raise ValueError("Invalid model type. Choose 'argmax', 'vector', or 'straight_through'.")
 EPSILON = float(sys.argv[6])  # Noise factor for parameter initialization
 OMEGA = float(sys.argv[7])  # Omega value for loading pre-trained modules
 EPOCHS = int(sys.argv[8]) if len(sys.argv) > 8 else 5000  # Number of training epochs
@@ -37,6 +61,9 @@ EPOCH_SIZE = int(sys.argv[10]) if len(sys.argv) > 10 else 1000  # Number of exam
 FIXED_VARIABILITY = len(sys.argv) > 11 and sys.argv[11].lower() in ['yes', 'true', '1']  # Fixed variability flag (Yes/No)
 TRAINING_DISTRIBUTION_TYPE = str(sys.argv[12]).lower() if len(sys.argv) > 12 else "none"  # Use curriculum learning for training (decreasing_exponential or balanced)
 ALPHA_CURRICULUM = float(sys.argv[13]) if len(sys.argv) > 13 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
+TRAIN_MODE = str(sys.argv[14]).lower() if len(sys.argv) > 14 else "decision_only"  # "decision_only" (freeze extractors, original behavior) or "all" (unfreeze + jointly train extractors too)
+if TRAIN_MODE not in ("decision_only", "all"):
+    raise ValueError("Invalid TRAIN_MODE. Choose 'decision_only' or 'all'.")
 
 # --- Training Parameters ---
 LEARNING_RATE = 0.003
@@ -185,7 +212,7 @@ with open(config_path, "w") as f:
     f.write(f"Cluster Directory: {CLUSTER if CLUSTER else ''}\n")
     f.write(f"Module Name: decision_module\n")
     f.write(f"Study Name: {STUDY_NAME}\n")
-    f.write(f"Model Type (Argmax or Vector): {MODEL_TYPE}\n")
+    f.write(f"Model Type (argmax, vector, or straight_through): {MODEL_TYPE}\n")
     f.write(f"Number Size: {NUMBER_SIZE}\n")
     f.write(f"Parameter Initialization Type (Wise initialization or Random initialization): {PARAM_TYPE}\n")
     f.write(f"Noise Factor for Initialization Parameters (Epsilon): {EPSILON}\n")
@@ -198,6 +225,7 @@ with open(config_path, "w") as f:
     f.write(f"Fixed Variability: {'Yes' if FIXED_VARIABILITY else 'No'}\n")
     f.write(f"Unit Extractor imported: {unit_dir}\n")
     f.write(f"Carry Extractor imported: {carry_dir}\n")
+    f.write(f"Train Mode (decision_only = extractors frozen, all = extractors jointly fine-tuned): {TRAIN_MODE}\n")
     f.write(f"Distribution used for the training set: {TRAINING_DISTRIBUTION_TYPE}\n")
     f.write(f"Alpha for curriculum learning: {ALPHA_CURRICULUM}\n")
     f.write(f"Finish Tolerance: {FINISH_TOLERANCE}\n")
@@ -227,8 +255,72 @@ if MODEL_TYPE == "vector":
     model_fn = decision_model_vector
 elif MODEL_TYPE == "argmax":
     model_fn = decision_model_argmax
+elif MODEL_TYPE == "straight_through":
+    model_fn = decision_model_straight_through
 else:
-    raise ValueError("Invalid model type. Choose 'argmax' or 'vector'.")
+    raise ValueError("Invalid model type. Choose 'argmax', 'vector', or 'straight_through'.")
+
+# --- TRAIN_MODE wiring ---
+# "decision_only": unchanged behavior -- unit_module/carry_module are only
+#   ever read (used to compute the extractor outputs feeding into the
+#   decision model), never touched by update_params, so they stay exactly as
+#   loaded from disk for the whole run.
+# "all": unit_module/carry_module are folded into a single trainable pytree
+#   together with the decision params, and every gradient step differentiates
+#   the loss with respect to all three jointly, via a local wrapper around
+#   the library's compute_loss(). NOTE: this assumes compute_loss() does not
+#   internally stop_gradient() on unit_module/carry_module (it has no reason
+#   to today, since nothing upstream ever called grad on them) -- if it does,
+#   this will run without error but the extractor params simply won't move.
+#   CAVEAT for MODEL_TYPE="argmax" specifically: jnp.argmax has zero gradient
+#   a.e., so under "all" the extractors will run without error but never
+#   actually move from wherever they were loaded/initialized -- the run will
+#   silently be equivalent to "decision_only" for unit/carry. Use
+#   MODEL_TYPE="straight_through" instead if you want a real "all" run with a
+#   discrete-forward-pass condition that is actually trainable end-to-end.
+if TRAIN_MODE == "all":
+    trainable = {"decision": params, "unit": unit_module, "carry": carry_module}
+
+    def _joint_loss(trainable_params, x, y):
+        return compute_loss(
+            trainable_params["decision"], x, y,
+            trainable_params["unit"], trainable_params["carry"],
+            unit_structure, carry_structure, model_fn
+        )
+
+    _joint_grad_fn = jax.jit(jax.grad(_joint_loss))
+
+    def train_step(trainable_params, x, y):
+        grads = _joint_grad_fn(trainable_params, x, y)
+        return jax.tree_util.tree_map(
+            lambda p, g: p - LEARNING_RATE * g, trainable_params, grads
+        )
+else:
+    trainable = {"decision": params, "unit": unit_module, "carry": carry_module}
+
+    def train_step(trainable_params, x, y):
+        # Only the decision params are updated; unit/carry are passed through
+        # untouched, exactly like the original script.
+        new_decision = update_params(
+            trainable_params["decision"], x, y,
+            trainable_params["unit"], trainable_params["carry"], LEARNING_RATE,
+            model_fn=model_fn, unit_structure=unit_structure, carry_structure=carry_structure
+        )
+        trainable_params["decision"] = new_decision
+        return trainable_params
+
+def _save_finetuned_extractors(save_dir, checkpoint_number=None):
+    """Only meaningful in TRAIN_MODE='all': persist the fine-tuned extractor
+    params alongside the decision-module checkpoint, since save_results_and_module()
+    only knows how to save the decision params."""
+    if TRAIN_MODE != "all":
+        return
+    import pickle
+    suffix = f"_checkpoint_{checkpoint_number}" if checkpoint_number is not None else "_final"
+    with open(os.path.join(save_dir, f"unit_extractor_finetuned{suffix}.pkl"), "wb") as f:
+        pickle.dump(trainable["unit"], f)
+    with open(os.path.join(save_dir, f"carry_extractor_finetuned{suffix}.pkl"), "wb") as f:
+        pickle.dump(trainable["carry"], f)
 
 # --- Training Loop (prepare log and pre-training checkpoint 0) ---
 log_path = os.path.join(SAVE_DIR, "training_log.csv")
@@ -271,6 +363,7 @@ try:
 
     # Save checkpoint 0 (initial parameters)
     save_results_and_module(None, accuracy, params, SAVE_DIR, checkpoint_number=0)
+    _save_finetuned_extractors(SAVE_DIR, checkpoint_number=0)
     print(f"Saved pre-training checkpoint 0 in {SAVE_DIR}")
 except Exception as e:
     print(f"Warning: pre-training evaluation or checkpoint save failed: {e}")
@@ -286,14 +379,12 @@ for epoch in range(EPOCHS):
         # Generate training batch with curriculum learning
         x_train, y_train = generate_train_dataset(train_pairs, BATCH_SIZE, OMEGA, distribution=TRAINING_DISTRIBUTION_TYPE, alpha=ALPHA_CURRICULUM, number_size=NUMBER_SIZE, seed=epoch * batches_per_epoch + batch_idx, fixed_variability=FIXED_VARIABILITY)
         
-        # Update parameters
+        # Update parameters (decision-only, or decision+extractors jointly per TRAIN_MODE)
         try:
-            params = update_params(
-                params, x_train, y_train, unit_module, carry_module, LEARNING_RATE, model_fn=model_fn,
-                unit_structure=unit_structure, carry_structure=carry_structure
-            )
+            trainable = train_step(trainable, x_train, y_train)
+            params, unit_module, carry_module = trainable["decision"], trainable["unit"], trainable["carry"]
         except Exception as e:
-            print(f"[ERROR] update_params failed at epoch {epoch+1}, batch {batch_idx+1}: {e}")
+            print(f"[ERROR] update step failed at epoch {epoch+1}, batch {batch_idx+1}: {e}")
             raise
     
     if (epoch + 1) % SHOW_EVERY_N_EPOCHS == 0 or epoch == 0:
@@ -343,6 +434,7 @@ for epoch in range(EPOCHS):
     if (epoch + 1) % CHECKPOINT_EVERY == 0:
         try:
             save_results_and_module(None, accuracy, params, SAVE_DIR, checkpoint_number=epoch + 1)
+            _save_finetuned_extractors(SAVE_DIR, checkpoint_number=epoch + 1)
         except Exception as e:
             print(f"[ERROR] Failed to save checkpoint {epoch+1}: {e}")
     
@@ -405,4 +497,5 @@ df_results = pd.DataFrame(results)
 
 # --- Save Final Model ---
 save_results_and_module(df_results, final_accuracy, params, SAVE_DIR)
+_save_finetuned_extractors(SAVE_DIR)
 print('Training complete.')
