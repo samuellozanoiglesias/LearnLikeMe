@@ -1,4 +1,4 @@
-# USE: nohup python analyze_training_decision_module.py 2 STUDY WI argmax > logs_analysis_training_decision.out 2>&1 &
+# USE: nohup python analyze_training_decision_module.py 2 STUDY WI argmax decision_module > logs_analysis_training_decision.out 2>&1 &
 
 import os
 import sys
@@ -8,11 +8,12 @@ import seaborn as sns
 import numpy as np
 
 # --- Config ---
-CLUSTER = "brigit"  # Cuenca, Brigit or Local
+CLUSTER = "cuenca"  # Cuenca, Brigit or Local
 NUMBER_SIZE = int(sys.argv[1])  # Number of digits in the numbers to be added (2 for two-digit addition)
 STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
 MODEL_TYPE = str(sys.argv[4]).lower()  # 'argmax' or 'vector' version of the decision module
+TRAINING_TYPE = str(sys.argv[5]).lower()  # 'decision_module' or 'all_at_once' for the analysis
 
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""
@@ -23,7 +24,7 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module/{NUMBER_SIZE}-digit/{STUDY_NAME}/{PARAM_TYPE}/{MODEL_TYPE}_version"
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{TRAINING_TYPE}/{NUMBER_SIZE}-digit/{STUDY_NAME}/{PARAM_TYPE}/{MODEL_TYPE}_version"
 
 def analyze_multidigit_module(raw_dir):
     figures_dir = os.path.join(raw_dir, "figures")
@@ -65,12 +66,20 @@ def analyze_multidigit_module(raw_dir):
 
         with open(config_path, "r") as f:
             for line in f:
-                if "Weber fraction (Omega):" in line and ":" in line:
-                    omega = float(line.strip().split(":")[-1])
-                if "Parameter Initialization Type (Wise initialization or Random initialization):" in line:
-                    param_init_type = line.strip().split(":")[-1].strip()
-                if "Noise Factor for Initialization Parameters (Epsilon):" in line:
-                    epsilon = float(line.strip().split(":")[-1])
+                if TRAINING_TYPE == "decision_module":
+                    if "Weber fraction (Omega):" in line and ":" in line:
+                        omega = float(line.strip().split(":")[-1])
+                    if "Parameter Initialization Type (Wise initialization or Random initialization):" in line:
+                        param_init_type = line.strip().split(":")[-1].strip()
+                    if "Noise Factor for Initialization Parameters (Epsilon):" in line:
+                        epsilon = float(line.strip().split(":")[-1])
+                else:
+                    if "Weber fraction (Omega):" in line and ":" in line:
+                        omega = float(line.strip().split(":")[-1])
+                    if "Decision Parameter Initialization Type (Wise/Random):" in line:
+                        param_init_type = line.strip().split(":")[-1].strip()
+                    if "Epsilon (init scale):" in line:
+                        epsilon = float(line.strip().split(":")[-1])
 
         if os.path.exists(results_path):
             df = pd.read_csv(results_path)

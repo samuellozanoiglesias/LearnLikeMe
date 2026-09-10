@@ -1,6 +1,6 @@
 # USE:
 #
-# nohup python train_all_at_once.py cuenca 2 NEW_STUDY WI vector 0.05 0.05 0.10 15500 100 1000 No decreasing_exponential 0.1 No > logs_train_all_at_once.out 2>&1 &
+# nohup python train_all_at_once.py cuenca 2 NEW_STUDY WI vector 0.05 0.10 15500 100 1000 No decreasing_exponential 0.1 No > logs_train_all_at_once.out 2>&1 &
 #
 # "All-at-once" curriculum, for comparison against the existing step-by-step
 # pipeline (train_extractor_modules.py -> freeze -> train_decision_module.py).
@@ -54,16 +54,15 @@ NUMBER_SIZE = int(sys.argv[2])  # Number of digits in the numbers to be added
 STUDY_NAME = str(sys.argv[3]).upper()  # Name of the study
 PARAM_TYPE = str(sys.argv[4]).upper()  # 'WI' (wise init) or 'RI' (random init) for the decision layer
 MODEL_TYPE = str(sys.argv[5]).lower()  # 'vector', 'argmax', or 'straight_through' -- READ THE HEADER NOTE ABOVE before using 'argmax'
-EPSILON_DECISION = float(sys.argv[6])  # Noise/init scale for the decision-layer weights
-EPSILON_EXTRACTOR = float(sys.argv[7])  # Noise/init scale for carry_module & unit_module weights
-OMEGA = float(sys.argv[8])  # Weber fraction applied to the raw digit inputs
-EPOCHS = int(sys.argv[9]) if len(sys.argv) > 9 else 5000
-BATCH_SIZE = int(sys.argv[10]) if len(sys.argv) > 10 else 100
-EPOCH_SIZE = int(sys.argv[11]) if len(sys.argv) > 11 else 1000
-FIXED_VARIABILITY = len(sys.argv) > 12 and sys.argv[12].lower() in ['yes', 'true', '1']
-TRAINING_DISTRIBUTION_TYPE = str(sys.argv[13]).lower() if len(sys.argv) > 13 else "none"  # decreasing_exponential / balanced / none
-ALPHA_CURRICULUM = float(sys.argv[14]) if len(sys.argv) > 14 else 0.1  # only used if TRAINING_DISTRIBUTION_TYPE == decreasing_exponential
-EARLY_STOP = len(sys.argv) > 15 and sys.argv[15].lower() in ['yes', 'true', '1']  # stop as soon as target accuracy is hit (Yes), or keep training the full EPOCHS budget (No)
+EPSILON = float(sys.argv[6])  # Noise/init scale for the decision-layer weights
+OMEGA = float(sys.argv[7])  # Weber fraction applied to the raw digit inputs
+EPOCHS = int(sys.argv[8]) if len(sys.argv) > 8 else 5000
+BATCH_SIZE = int(sys.argv[9]) if len(sys.argv) > 9 else 100
+EPOCH_SIZE = int(sys.argv[10]) if len(sys.argv) > 10 else 1000
+FIXED_VARIABILITY = len(sys.argv) > 11 and sys.argv[11].lower() in ['yes', 'true', '1']
+TRAINING_DISTRIBUTION_TYPE = str(sys.argv[12]).lower() if len(sys.argv) > 12 else "none"  # decreasing_exponential / balanced / none
+ALPHA_CURRICULUM = float(sys.argv[13]) if len(sys.argv) > 13 else 0.1  # only used if TRAINING_DISTRIBUTION_TYPE == decreasing_exponential
+EARLY_STOP = len(sys.argv) > 14 and sys.argv[14].lower() in ['yes', 'true', '1']  # stop as soon as target accuracy is hit (Yes), or keep training the full EPOCHS budget (No)
 
 if MODEL_TYPE not in ("vector", "argmax", "straight_through"):
     raise ValueError("Invalid model type. Choose 'argmax', 'vector', or 'straight_through'.")
@@ -101,7 +100,7 @@ else:
 DATASET_DIR = f"{CODE_DIR}/datasets/{NUMBER_SIZE}-digit"
 MODULES_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe"
 RAW_DIR = f"{MODULES_DIR}/all_at_once/{NUMBER_SIZE}-digit/{STUDY_NAME}"
-SAVE_DIR = f"{RAW_DIR}/{PARAM_TYPE}/{MODEL_TYPE}_version/epsilon_decision_{EPSILON_DECISION:.2f}_epsilon_extractor_{EPSILON_EXTRACTOR:.2f}/Training_{timestamp}"
+SAVE_DIR = f"{RAW_DIR}/{PARAM_TYPE}/{MODEL_TYPE}_version/epsilon_{EPSILON:.2f}/Training_{timestamp}"
 PARAMS_DIR = f"{RAW_DIR}/initial_parameters"
 
 os.makedirs(RAW_DIR, exist_ok=True)
@@ -178,17 +177,17 @@ x_test, y_test = generate_test_dataset(test_pairs, number_size=NUMBER_SIZE)
 carry_model = ExtractorModel(structure=CARRY_STRUCTURE, output_dim=2)
 unit_model = ExtractorModel(structure=UNIT_STRUCTURE, output_dim=10)
 
-rng = jrandom.PRNGKey(hash((STUDY_NAME, EPSILON_DECISION, EPSILON_EXTRACTOR)) % (2 ** 31))
+rng = jrandom.PRNGKey(hash((STUDY_NAME, EPSILON)) % (2 ** 31))
 rng_carry, rng_unit = jrandom.split(rng, 2)
 
 carry_params_path = os.path.join(PARAMS_DIR, f"initial_params_carry_{timestamp}.json")
 unit_params_path = os.path.join(PARAMS_DIR, f"initial_params_unit_{timestamp}.json")
-carry_params = create_and_save_extractor_params(carry_model, rng_carry, (1, 2), carry_params_path, epsilon=EPSILON_EXTRACTOR)
-unit_params = create_and_save_extractor_params(unit_model, rng_unit, (1, 2), unit_params_path, epsilon=EPSILON_EXTRACTOR)
+carry_params = create_and_save_extractor_params(carry_model, rng_carry, (1, 2), carry_params_path, epsilon=EPSILON)
+unit_params = create_and_save_extractor_params(unit_model, rng_unit, (1, 2), unit_params_path, epsilon=EPSILON)
 
 # Decision-layer params: same WI/RI init the step-by-step pipeline uses.
 decision_params = initialize_decision_params(
-    PARAMS_DIR, epsilon=EPSILON_DECISION, param_type=PARAM_TYPE,
+    PARAMS_DIR, epsilon=EPSILON, param_type=PARAM_TYPE,
     model_type=MODEL_TYPE, timestamp=timestamp, number_size=NUMBER_SIZE,
 )
 
@@ -288,8 +287,7 @@ with open(os.path.join(SAVE_DIR, "config.txt"), "w") as f:
                else "\n"))
     f.write(f"Number Size: {NUMBER_SIZE}\n")
     f.write(f"Decision Parameter Initialization Type (Wise/Random): {PARAM_TYPE}\n")
-    f.write(f"Epsilon (decision-layer init scale): {EPSILON_DECISION}\n")
-    f.write(f"Epsilon (extractor modules init scale): {EPSILON_EXTRACTOR}\n")
+    f.write(f"Epsilon (init scale): {EPSILON}\n")
     f.write(f"Weber fraction (Omega): {OMEGA}\n")
     f.write(f"Fixed Variability: {'Yes' if FIXED_VARIABILITY else 'No'}\n")
     f.write(f"Distribution used for the training set: {TRAINING_DISTRIBUTION_TYPE}\n")

@@ -3,12 +3,12 @@
 
 cluster=cuenca
 number_size=2  # Number of digits in the numbers to be added (2 for two-digit addition)
-study_name=NEW_STUDY  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+study_name=19_STUDY-FIXED_EXP_DECAY_0.05-OMEGA_0.10  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 param_type=RI  # "WI" for wise initialization or "RI" for random initialization
-model_type=argmax  # "argmax" or "vector" or "straight_through"
-epochs=10000  # Number of training epochs
-batch_size=25  # Batch size for training
-epoch_size=100 # Number of examples per epoch
+model_type=straight_through  # "argmax" or "vector" or "straight_through"
+epochs=2000  # Number of training epochs
+batch_size=100  # Batch size for training
+epoch_size=1000 # Number of examples per epoch
 fixed_variability=Yes  # "Yes" or "No" to indicate if fixed variability is used
 training_distribution_type=Decreasing_exponential  # "Decreasing_exponential" or "Balanced"
 alpha_curriculum=0.05  # Only used if training_distribution_type is "Decreasing_exponential"
@@ -30,9 +30,9 @@ init_omegas=0.10
 end_omegas=0.10
 step_omegas=0.05
 
-init_epsilons=0.50
-end_epsilons=0.50
-step_epsilons=0.05
+init_epsilons=0.0
+end_epsilons=10.0
+step_epsilons=0.5
 
 mapfile -t omegas < <(seq $init_omegas $step_omegas $end_omegas)
 mapfile -t epsilons < <(seq $init_epsilons $step_epsilons $end_epsilons)

@@ -9,7 +9,7 @@ import numpy as np
 from sklearn.metrics import confusion_matrix
 
 # --- Config ---
-CLUSTER = "brigit"  # Cuenca, Brigit or Local
+CLUSTER = "cuenca"  # Cuenca, Brigit or Local
 MODULE_NAME = str(sys.argv[1]).lower()  # unit_extractor or carry_extractor
 STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 

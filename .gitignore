@@ -173,3 +173,4 @@ cython_debug/
 *.out
 input*
 output*
+checkpoint_gridsearch_results/trained_model_*

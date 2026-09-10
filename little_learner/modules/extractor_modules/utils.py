@@ -1,3 +1,4 @@
+from math import sqrt
 import os
 import json
 import jax
@@ -62,7 +63,7 @@ def create_and_save_initial_params(model, rng, input_shape, file_path, epsilon=N
         
         def gaussian_init(param, rng_key):
             """Initialize parameter from Gaussian N(0, epsilon^2)"""
-            return jrandom.normal(rng_key, shape=param.shape) * epsilon
+            return jrandom.normal(rng_key, shape=param.shape) * sqrt(epsilon)
     
         # Apply Gaussian initialization to all parameters
         param_rngs_iter = iter(param_rngs)

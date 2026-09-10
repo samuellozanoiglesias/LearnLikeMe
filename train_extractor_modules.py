@@ -35,6 +35,7 @@ FIXED_VARIABILITY = len(sys.argv) > 6 and sys.argv[6].lower() in ['yes', 'true',
 EARLY_STOP = len(sys.argv) > 7 and sys.argv[7].lower() in ['yes', 'true', '1']  # Early stopping flag (Yes/No)
 TRAINING_DISTRIBUTION_TYPE = str(sys.argv[8]).lower() if len(sys.argv) > 8 else "none"  # Use curriculum learning for training (Decreasing_exponential or Balanced)
 ALPHA_CURRICULUM = float(sys.argv[9]) if len(sys.argv) > 9 else 0.1  # Only used if TRAINING_DISTRIBUTION_TYPE is "decreasing_exponential"
+SEED = int(sys.argv[10]) if len(sys.argv) > 10 else 42  # Random seed for reproducibility
 
 # --- Training Parameters ---
 LEARNING_RATE = 0.003
@@ -55,7 +56,7 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}/{STUDY_NAME}" 
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{MODULE_NAME}/{STUDY_NAME}/epsilon_{EPSILON:.2f}/" 
 SAVE_DIR = f"{RAW_DIR}/Training_{timestamp}"
 PARAMS_DIR = f"{RAW_DIR}/initial_parameters"
 
@@ -134,7 +135,7 @@ if PARAMS_FILE is not None:
     initial_params = load_initial_params(PARAMS_FILE)
 else:
     PARAMS_FILE = os.path.join(PARAMS_DIR, f"initial_params_{timestamp}.json")
-    rng = random.PRNGKey(42)
+    rng = random.PRNGKey(SEED)
     input_shape = (1, 2)  # (batch_size, 2 features for a and b)
     initial_params = create_and_save_initial_params(model, rng, input_shape, PARAMS_FILE, epsilon=EPSILON)
 
@@ -177,7 +178,7 @@ for epoch in range(EPOCHS):
         # Generate batch with curriculum learning
         x_batch, y_batch = generate_batch_data(
             all_train_pairs, BATCH_SIZE, omega=OMEGA, 
-            seed=epoch * batches_per_epoch + batch_idx,  # Unique seed per batch
+            seed=SEED + epoch * batches_per_epoch + batch_idx,  # Unique seed per batch
             module_name=MODULE_NAME, fixed_variability=FIXED_VARIABILITY,
             distribution=TRAINING_DISTRIBUTION_TYPE, alpha=ALPHA_CURRICULUM
         )

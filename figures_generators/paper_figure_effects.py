@@ -1,4 +1,4 @@
-# USE: nohup python paper_figure_effects.py 2 STUDY WI argmax 0.15 500 > logs_paper_effects.out 2>&1 &
+# USE: nohup python paper_figure_effects.py 2 STUDY WI argmax decision_module 0.15 500 > logs_paper_effects.out 2>&1 &
 
 import os
 import sys
@@ -13,13 +13,14 @@ plt.rcParams['mathtext.fontset'] = 'stix'
 plt.rcParams['font.family'] = 'STIXGeneral'
 
 # --- Config ---
-CLUSTER = "brigit"  # Cuenca, Brigit or Local
+CLUSTER = "cuenca"  # Cuenca, Brigit or Local
 NUMBER_SIZE = int(sys.argv[1])  # Number of digits in the numbers to be added (2 for two-digit addition)
 STUDY_NAME = str(sys.argv[2]).upper()  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 PARAM_TYPE = str(sys.argv[3]).upper()  # Parameter type for initialization ('WI' for wise initialization or 'RI' for random initialization)
-MODEL_TYPE = str(sys.argv[4]).lower()  # 'argmax' or 'vector' version of the decision module
-OMEGA_VALUE = float(sys.argv[5])  # Specific omega value to analyze
-EPOCH = int(sys.argv[6]) if len(sys.argv) > 6 else "last"  # Specific epoch for barplot analysis
+MODEL_TYPE = str(sys.argv[4]).lower()  # 'argmax' or 'vector' or 'straight_through' version of the decision module
+TRAINING_TYPE = str(sys.argv[5]).lower()  # 'decision_module' or 'all_at_once' for the analysis
+OMEGA_VALUE = float(sys.argv[6])  # Specific omega value to analyze
+EPOCH = int(sys.argv[7]) if len(sys.argv) > 7 else "last"  # Specific epoch for barplot analysis
 
 if CLUSTER == "cuenca":
     CLUSTER_DIR = ""
@@ -30,8 +31,8 @@ elif CLUSTER == "local":
 else:
     raise ValueError("Invalid cluster name. Choose 'cuenca', 'brigit', or 'local'.")
 
-FIGURES_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/figures_paper/{STUDY_NAME}"
-RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/decision_module/{NUMBER_SIZE}-digit/{STUDY_NAME}/{PARAM_TYPE}/{MODEL_TYPE}_version"
+FIGURES_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/figures_paper/{STUDY_NAME}/{TRAINING_TYPE}"
+RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{TRAINING_TYPE}/{NUMBER_SIZE}-digit/{STUDY_NAME}/{PARAM_TYPE}/{MODEL_TYPE}_version"
 
 def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
     os.makedirs(figures_dir, exist_ok=True)
@@ -77,7 +78,9 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
     
     # --- Figure 1: Errors over epochs (aggregated across all epsilons) ---
     acc_labels = ["Small - No Carry", "Small - Carry", "Large - No Carry", "Large - Carry"]
-    colors = ["#5FA8FF", "#1C6CE5", "#F46A6A", "#D62828"]  # Sky blue, light pink, steel blue, indian red
+    colors = ["#999999", "#4D4D4D", "#999999", "#4D4D4D"]  # light grey, dark grey, light grey, dark grey
+    linestyles = ["-", "-", ":", ":"]  # solid = blue family, dashed = red family
+    #colors = ["#5FA8FF", "#1C6CE5", "#F46A6A", "#D62828"]  # Sky blue, light pink, steel blue, indian red
     
     pw = {}
     for col in acc_cols:
@@ -86,7 +89,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
     
     if pw:
         plt.figure(figsize=(12, 7))
-        for col, lbl, colcol in zip(acc_cols, acc_labels, colors):
+        for col, lbl, colcol, linestyle in zip(acc_cols, acc_labels, colors, linestyles):
             if col not in pw:
                 continue
             df_runs = pw[col]
@@ -108,18 +111,19 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             # Convert accuracy to error
             error_mean = 100 - mean
             error_std = np.sqrt(std)  # std remains the same
-            plt.plot(idx, error_mean, label=lbl, color=colcol, linewidth=2.5)
+            plt.plot(idx, error_mean, label=lbl, color=colcol, linewidth=2.5, linestyle=linestyle)
             plt.fill_between(idx, error_mean - error_std, error_mean + error_std, color=colcol, alpha=0.2)
         
         plt.xlabel('Batch', fontsize=32)
-        plt.ylabel('Mean Error Rate (%)', fontsize=32)
+        plt.ylabel('Model Mean Error Rate (%)', fontsize=32)
         plt.ylim(-5, 105)
+        plt.xlim(left=0, right=2000)
         plt.tick_params(axis='both', labelsize=28)
         plt.legend(loc='best', fontsize=30)
         plt.grid(axis="y", linestyle="--", linewidth=1, color="gray", alpha=0.7)
         
         safe_om = str(omega_value).replace('.', '_')
-        fname = os.path.join(figures_dir, f"errors_epochs_omega_{safe_om}_all_eps.png")
+        fname = os.path.join(figures_dir, f"errors_epochs_omega_{safe_om}_all_eps_{MODEL_TYPE}.png")
         plt.savefig(fname, bbox_inches='tight', dpi=300)
         plt.close()
         print(f"Figure 1 saved to: {fname}")
@@ -165,7 +169,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             bars = ax.bar(x_positions, means, yerr=np.sqrt(stds), capsize=5, color=colors, 
                          alpha=0.8, edgecolor='black', linewidth=1.5, width=0.7)
             
-            ax.set_ylabel('Mean Error Rate (%)', fontsize=32)
+            ax.set_ylabel('Model Mean Error Rate (%)', fontsize=32)
             ax.set_xticks([0.4, 2.6])
             ax.set_xticklabels(['Small', 'Large'], fontsize=28)
             ax.set_xlabel('Problem Size', fontsize=32)
@@ -182,7 +186,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             ]
             ax.legend(handles=legend_elements, loc='upper left', fontsize=30, framealpha=0.95)
             
-            fname2 = os.path.join(figures_dir, f"barplot_errors_omega_{safe_om}_epoch_{int(selected_epoch)}.png")
+            fname2 = os.path.join(figures_dir, f"barplot_errors_omega_{safe_om}_epoch_{int(selected_epoch)}_{MODEL_TYPE}.png")
             plt.savefig(fname2, bbox_inches='tight', dpi=300)
             plt.close()
             print(f"Figure 2 (without RT) saved to: {fname2}")
@@ -199,18 +203,26 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             
             # Create secondary y-axis for reaction times
             ax2 = ax.twinx()
-            ax2.set_ylabel('Reaction Time (ms)', fontsize=32)
+            ax2.set_ylabel('Human Reaction Time (ms)', fontsize=32)
             ax2.set_ylim(min_RT, max_RT)
             ax2.tick_params(axis='y', labelsize=28)
             
             # Normalize RT values to the error axis scale (0-105) for plotting
             rt_normalized = [(rt - min_RT) / (max_RT - min_RT) * 105 for rt in rt_values]
-            
-            # Plot experimental data as black stars on the primary axis
-            ax.scatter(x_positions, rt_normalized, marker='*', s=500, color='green', edgecolors='darkgreen', linewidth=1, 
+
+            # Connect the two stars within each problem-size group (Small: 0-1, Large: 2-3)
+            # Two separate segments, not one line across all four points, so we don't
+            # imply a trend between problem sizes that isn't in the data.
+            ax.plot(x_positions[0:2], rt_normalized[0:2], color='black', linewidth=2.5,
+                    linestyle='-', zorder=4)
+            ax.plot(x_positions[2:4], rt_normalized[2:4], color='black', linewidth=2.5,
+                    linestyle='-', zorder=4)
+
+            # Plot experimental data as stars on the primary axis
+            ax.scatter(x_positions, rt_normalized, marker='*', s=1000, color='black', edgecolors='dimgray', linewidth=1,
                       zorder=5, label='Experimental RTs')
             
-            ax.set_ylabel('Mean Error Rate (%)', fontsize=32)
+            ax.set_ylabel('Model Mean Error Rate (%)', fontsize=32)
             ax.set_xticks([0.4, 2.6])
             ax.set_xticklabels(['Small', 'Large'], fontsize=28)
             ax.set_xlabel('Problem Size', fontsize=32)
@@ -220,16 +232,16 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             
             # Add legend with experimental RT
             legend_elements_with_rt = [
-                Patch(facecolor=colors[0], edgecolor='black', label='Small - No Carry', alpha=0.8),
-                Patch(facecolor=colors[1], edgecolor='black', label='Small - Carry', alpha=0.8),
-                Patch(facecolor=colors[2], edgecolor='black', label='Large - No Carry', alpha=0.8),
-                Patch(facecolor=colors[3], edgecolor='black', label='Large - Carry', alpha=0.8),
-                Line2D([0], [0], marker='*', color='w', markerfacecolor='green', markeredgecolor='darkgreen',
-                       markersize=15, label='Experimental RTs')
+                Patch(facecolor=colors[0], edgecolor='black', label='No Carry', alpha=0.8),
+                Patch(facecolor=colors[1], edgecolor='black', label='Carry', alpha=0.8),
+                #Patch(facecolor=colors[2], edgecolor='black', label='Large - No Carry', alpha=0.8),
+                #Patch(facecolor=colors[3], edgecolor='black', label='Large - Carry', alpha=0.8),
+                Line2D([0], [0], marker='*', color='w', markerfacecolor='black', markeredgecolor='black',
+                       markersize=25, label='Experimental RTs')
             ]
             ax.legend(handles=legend_elements_with_rt, loc='upper left', fontsize=32, framealpha=0.95)
             
-            fname3 = os.path.join(figures_dir, f"barplot_errors_omega_{safe_om}_epoch_{int(selected_epoch)}_with_RT.png")
+            fname3 = os.path.join(figures_dir, f"barplot_errors_omega_{safe_om}_epoch_{int(selected_epoch)}_with_RT_{MODEL_TYPE}.png")
             plt.savefig(fname3, bbox_inches='tight', dpi=300)
             plt.close()
             print(f"Figure 2 (with RT) saved to: {fname3}")

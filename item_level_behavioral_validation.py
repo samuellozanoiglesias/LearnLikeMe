@@ -22,7 +22,7 @@ Pipeline
         - scan every Training_<timestamp> folder under
           .../RI/argmax_version/epsilon_<eps>/
         - keep only the folders whose config.txt reports
-          "Weber fraction (Omega): 0.10"
+          "Weber fraction (Omega): 0.1"
         - load trained_model_checkpoint_600.pkl from each kept folder
           (one "initialization" / seed)
         - run decision_model_argmax on the 96 items
@@ -72,15 +72,15 @@ import matplotlib.pyplot as plt
 # --------------------------------------------------------------------------
 
 CLUSTER_DIR = os.environ.get("CLUSTER_DIR", "")  # e.g. "" if already on the cluster, or a mount prefix
-STUDY_NAME = "16_STUDY-FIXED_EXP_DECAY_0.05"
+STUDY_NAME = "19_STUDY-FIXED_EXP_DECAY_0.05-OMEGA_0.10"
 
 MODULES_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe"
 DECISION_BASE_DIR = (
-    f"{MODULES_DIR}/LearnLikeMe/decision_module/2-digit/"
+    f"{MODULES_DIR}/decision_module/2-digit/"
     f"{STUDY_NAME}/RI/argmax_version"
 )
 
-TARGET_OMEGA = 0.10          # Weber fraction to filter on, per config.txt
+TARGET_OMEGA = 0.1          # Weber fraction to filter on, per config.txt
 EPSILON_VALUES = [round(v, 2) for v in np.arange(0.00, 10.001, 0.50)]
 CHECKPOINT_NAME = "trained_model_checkpoint_600.pkl"
 
@@ -180,6 +180,7 @@ def config_matches_omega(config_path: str, target_omega: float, tol: float = 1e-
     except OSError:
         return False
     m = WEBER_RE.search(text)
+    # print(f"  {config_path}: found Omega={m.group(1) if m else 'N/A'}")
     if not m:
         return False
     return abs(float(m.group(1)) - target_omega) < tol
@@ -195,6 +196,76 @@ def find_training_dirs_for_epsilon(epsilon: float, target_omega: float = TARGET_
         if os.path.isfile(config_path) and config_matches_omega(config_path, target_omega):
             matches.append(training_dir)
     return matches
+
+
+CHECKPOINT_NUM_RE = re.compile(r"trained_model_checkpoint_(\d+)\.pkl$")
+FALLBACK_CHECKPOINT_NAME = "trained_model.pkl"
+TARGET_CHECKPOINT_NUM = 600  # only used as a last-resort default -- see _target_checkpoint_num()
+
+
+def _target_checkpoint_num():
+    """The epoch number resolve_checkpoint_path() should treat as 'the
+    target'. Derived from the *current* CHECKPOINT_NAME (so this stays
+    correct if CHECKPOINT_NAME is swapped at runtime, e.g. by a gridsearch
+    driver script iterating over several checkpoint names) rather than a
+    hardcoded constant. Falls back to TARGET_CHECKPOINT_NUM if CHECKPOINT_NAME
+    doesn't match the trained_model_checkpoint_<N>.pkl pattern."""
+    m = CHECKPOINT_NUM_RE.search(CHECKPOINT_NAME)
+    return int(m.group(1)) if m else TARGET_CHECKPOINT_NUM
+
+
+def resolve_checkpoint_path(training_dir: str):
+    """Return the checkpoint file to load for this training_dir.
+
+    Preference order:
+      1. CHECKPOINT_NAME itself (e.g. trained_model_checkpoint_600.pkl), if present.
+      2. If it's absent, but some checkpoint >= the target epoch exists under
+         a differently-numbered name, that's unexpected -- warn and skip
+         (return None) rather than silently guessing which one to use.
+      3. If it's absent and every checkpoint found in the folder is for
+         an earlier epoch (i.e. training stopped early), fall back to
+         trained_model.pkl directly.
+      4. If nothing usable is found, return None.
+    """
+    target_path = os.path.join(training_dir, CHECKPOINT_NAME)
+    if os.path.isfile(target_path):
+        return target_path
+
+    target_num = _target_checkpoint_num()
+    other_checkpoints = glob.glob(os.path.join(training_dir, "trained_model_checkpoint_*.pkl"))
+    nums = []
+    for path in other_checkpoints:
+        m = CHECKPOINT_NUM_RE.search(os.path.basename(path))
+        if m:
+            nums.append(int(m.group(1)))
+
+    if nums and max(nums) >= target_num:
+        # A checkpoint at or beyond the target epoch exists under a name we
+        # didn't expect; don't guess -- surface this instead of silently
+        # substituting.
+        warnings.warn(
+            f"[{training_dir}] {CHECKPOINT_NAME} missing, but found checkpoint(s) "
+            f">= {target_num} ({sorted(nums)}) -- skipping rather than "
+            f"guessing which one to use."
+        )
+        return None
+
+    fallback_path = os.path.join(training_dir, FALLBACK_CHECKPOINT_NAME)
+    if os.path.isfile(fallback_path):
+        if nums:
+            warnings.warn(
+                f"[{training_dir}] {CHECKPOINT_NAME} not found; all available "
+                f"checkpoints are earlier ({sorted(nums)}), so using "
+                f"{FALLBACK_CHECKPOINT_NAME} instead."
+            )
+        else:
+            warnings.warn(
+                f"[{training_dir}] {CHECKPOINT_NAME} not found and no other "
+                f"checkpoint_*.pkl present; using {FALLBACK_CHECKPOINT_NAME}."
+            )
+        return fallback_path
+
+    return None
 
 
 def load_checkpoint_params(checkpoint_path: str):
@@ -312,6 +383,12 @@ class EpsilonResult:
     epsilon: float
     n_inits: int
     item_error_rate: np.ndarray  # (96,)
+    # Raw per-initialization error vectors (list of (96,) arrays), one per
+    # kept Training_* folder for this epsilon. Kept around (rather than only
+    # the epsilon-level mean) so that, downstream, every single initialization
+    # -- across every epsilon -- can be pooled together and treated as one
+    # independent "model human" for the all-epsilons-as-one-model analysis.
+    all_init_errors: list = field(default_factory=list)
 
 
 def run_epsilon(epsilon: float, x_all: np.ndarray, targets_all: np.ndarray) -> EpsilonResult:
@@ -319,13 +396,13 @@ def run_epsilon(epsilon: float, x_all: np.ndarray, targets_all: np.ndarray) -> E
     if not training_dirs:
         warnings.warn(f"[epsilon={epsilon:.2f}] No Training_* folder with "
                        f"Weber fraction {TARGET_OMEGA} found -- skipping.")
-        return EpsilonResult(epsilon, 0, np.full(x_all.shape[0], np.nan))
+        return EpsilonResult(epsilon, 0, np.full(x_all.shape[0], np.nan), [])
 
     per_init_errors = []
     for training_dir in training_dirs:
-        checkpoint_path = os.path.join(training_dir, CHECKPOINT_NAME)
-        if not os.path.isfile(checkpoint_path):
-            warnings.warn(f"[epsilon={epsilon:.2f}] missing {CHECKPOINT_NAME} "
+        checkpoint_path = resolve_checkpoint_path(training_dir)
+        if checkpoint_path is None:
+            warnings.warn(f"[epsilon={epsilon:.2f}] no usable checkpoint "
                            f"in {training_dir} -- skipping this init.")
             continue
         try:
@@ -343,11 +420,11 @@ def run_epsilon(epsilon: float, x_all: np.ndarray, targets_all: np.ndarray) -> E
             warnings.warn(f"[epsilon={epsilon:.2f}] failed on {training_dir}: {e}")
 
     if not per_init_errors:
-        return EpsilonResult(epsilon, 0, np.full(x_all.shape[0], np.nan))
+        return EpsilonResult(epsilon, 0, np.full(x_all.shape[0], np.nan), [])
 
     stacked = np.stack(per_init_errors, axis=0)  # (n_inits, 96)
     mean_error_rate = stacked.mean(axis=0)
-    return EpsilonResult(epsilon, stacked.shape[0], mean_error_rate)
+    return EpsilonResult(epsilon, stacked.shape[0], mean_error_rate, per_init_errors)
 
 
 # --------------------------------------------------------------------------
@@ -406,7 +483,7 @@ def plot_developmental_profile(corr_df: pd.DataFrame, out_path: str):
         ax.set_ylabel("Pearson r")
     axes[0].legend()
     fig.suptitle("Developmental profile: model-human correlation across training epsilon "
-                 "(Weber fraction = 0.10, batch 600)")
+                 f"(Weber fraction = 0.10, checkpoint = {CHECKPOINT_NAME})")
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
@@ -435,10 +512,184 @@ def plot_best_epsilon_scatter(best_epsilon: float, epsilon_results, aufgabe_orde
             ax.set_xlabel("Model error rate")
             ax.set_ylabel(measure)
     fig.suptitle(f"Item-level behavioral validation (epsilon = {best_epsilon:.2f}, "
-                 f"Weber fraction = 0.10, batch 600)")
+                 f"Weber fraction = 0.10, checkpoint = {CHECKPOINT_NAME})")
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
+
+
+# --------------------------------------------------------------------------
+# 6b. Pooled-across-epsilons analysis ("all epsilons as one unique model")
+# --------------------------------------------------------------------------
+#
+# Rationale: instead of treating each epsilon separately (section 4/5 above,
+# left completely untouched), here every kept initialization -- regardless of
+# which epsilon it was trained with -- is treated as one independent draw
+# from "the model", analogous to one human participant. Pooling all of them
+# together (e.g. 21 epsilons x ~N inits each) gives a set of simulated
+# "model humans" whose average and std per item can be compared directly to
+# the human group's average behavior, the same way you'd compare a group of
+# human participants to another group.
+
+
+@dataclass
+class PooledResult:
+    n_total_inits: int
+    per_init_errors: np.ndarray   # (n_total_inits, 96) -- every kept init, all epsilons pooled
+    item_error_mean: np.ndarray   # (96,) mean across all pooled inits
+    item_error_std: np.ndarray    # (96,) std across all pooled inits
+
+
+def pool_all_epsilon_initializations(epsilon_results) -> PooledResult:
+    """Concatenate the raw per-initialization error vectors from every
+    epsilon into one big pool (no re-loading of checkpoints needed -- this
+    reuses what run_epsilon() already computed)."""
+    pooled = []
+    for res in epsilon_results:
+        pooled.extend(res.all_init_errors)
+
+    if not pooled:
+        n_items = 96
+        empty = np.full((0, n_items), np.nan)
+        return PooledResult(0, empty, np.full(n_items, np.nan), np.full(n_items, np.nan))
+
+    stacked = np.stack(pooled, axis=0)  # (n_total_inits, 96)
+    return PooledResult(
+        n_total_inits=stacked.shape[0],
+        per_init_errors=stacked,
+        item_error_mean=stacked.mean(axis=0),
+        item_error_std=stacked.std(axis=0),
+    )
+
+
+def compute_pooled_correlations(pooled: PooledResult, aufgabe_order, kids_df, adults_df) -> pd.DataFrame:
+    """Same logic as compute_correlations(), but against the single pooled
+    mean item-error-rate vector (all epsilons treated as one model) instead
+    of one vector per epsilon."""
+    kids_by_item = kids_df.set_index("aufgabe").loc[aufgabe_order]
+    adults_by_item = adults_df.set_index("aufgabe").loc[aufgabe_order]
+
+    rows = []
+    model_err = pooled.item_error_mean
+    valid = ~np.isnan(model_err)
+    for pop_name, human_df in (("Kids_II", kids_by_item), ("Adults", adults_by_item)):
+        for measure in HUMAN_MEASURES:
+            y = human_df[measure].to_numpy()
+            if valid.sum() < 3 or np.nanstd(model_err[valid]) == 0:
+                r_p, p_p, r_s, p_s = np.nan, np.nan, np.nan, np.nan
+            else:
+                r_p, p_p = pearsonr(model_err[valid], y[valid])
+                r_s, p_s = spearmanr(model_err[valid], y[valid])
+            rows.append({
+                "n_total_inits": pooled.n_total_inits,
+                "population": pop_name,
+                "measure": measure,
+                "pearson_r": r_p,
+                "pearson_p": p_p,
+                "spearman_rho": r_s,
+                "spearman_p": p_s,
+            })
+    return pd.DataFrame(rows)
+
+
+def plot_pooled_scatter(pooled: PooledResult, aufgabe_order, kids_df, adults_df, out_path: str):
+    """Scatter of pooled model mean item-error-rate (with std as horizontal
+    error bars across the pooled 'model humans') vs. each human measure, for
+    both populations -- directly analogous to plot_best_epsilon_scatter()
+    but for the single pooled/all-epsilons model instead of one epsilon."""
+    kids_by_item = kids_df.set_index("aufgabe").loc[aufgabe_order]
+    adults_by_item = adults_df.set_index("aufgabe").loc[aufgabe_order]
+
+    model_err = pooled.item_error_mean
+    model_std = pooled.item_error_std
+    valid = ~np.isnan(model_err)
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    for row, (pop_name, human_df) in enumerate((("Kids_II", kids_by_item), ("Adults", adults_by_item))):
+        for col, measure in enumerate(HUMAN_MEASURES):
+            ax = axes[row, col]
+            y = human_df[measure].to_numpy()
+            ax.errorbar(
+                model_err[valid], y[valid], xerr=model_std[valid],
+                fmt="o", alpha=0.6, ecolor="grey", elinewidth=0.8,
+                capsize=2, markeredgecolor="k", markeredgewidth=0.3,
+            )
+            if valid.sum() >= 3 and np.std(model_err[valid]) > 0:
+                r, p = pearsonr(model_err[valid], y[valid])
+                z = np.polyfit(model_err[valid], y[valid], 1)
+                xs = np.linspace(model_err[valid].min(), model_err[valid].max(), 50)
+                ax.plot(xs, np.polyval(z, xs), color="firebrick", linewidth=1.5)
+                ax.set_title(f"{pop_name} - {measure}\nr={r:.2f}, p={p:.3g}")
+            ax.set_xlabel("Model error rate (mean +/- std across all epsilons)")
+            ax.set_ylabel(measure)
+    fig.suptitle(
+        f"Item-level behavioral validation -- all epsilons pooled as one model "
+        f"({pooled.n_total_inits} pooled initializations treated as 'model humans', "
+        f"Weber fraction = 0.10, checkpoint = {CHECKPOINT_NAME})"
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+
+
+def run_pooled_analysis(epsilon_results, aufgabe_order, kids_df, adults_df):
+    """Top-level entry point for the 'all epsilons as one unique model'
+    analysis. Does not touch or depend on the per-epsilon outputs already
+    written by main() -- purely additive. Returns (pooled, pooled_corr_df)."""
+    pooled = pool_all_epsilon_initializations(epsilon_results)
+    if pooled.n_total_inits == 0:
+        warnings.warn("[pooled] No initializations available across any epsilon "
+                       "-- skipping the pooled-model analysis.")
+        return pooled, pd.DataFrame()
+
+    # Item-level mean +/- std, pooling every epsilon's initializations
+    pooled_item_df = pd.DataFrame({
+        "aufgabe": aufgabe_order,
+        "model_error_mean": pooled.item_error_mean,
+        "model_error_std": pooled.item_error_std,
+    })
+    pooled_item_path = os.path.join(OUTPUT_DIR, "pooled_model_error_rates_mean_std.csv")
+    pooled_item_df.to_csv(pooled_item_path, index=False)
+
+    # Also save the raw (n_total_inits, 96) matrix so individual "model
+    # humans" can be inspected / re-analyzed later if needed.
+    pooled_raw_df = pd.DataFrame(pooled.per_init_errors, columns=aufgabe_order)
+    pooled_raw_df.index.name = "pooled_init_id"
+    pooled_raw_path = os.path.join(OUTPUT_DIR, "pooled_model_error_rates_per_init.csv")
+    pooled_raw_df.to_csv(pooled_raw_path)
+
+    pooled_corr_df = compute_pooled_correlations(pooled, aufgabe_order, kids_df, adults_df)
+    pooled_corr_path = os.path.join(OUTPUT_DIR, "pooled_correlation_results.csv")
+    pooled_corr_df.to_csv(pooled_corr_path, index=False)
+
+    pooled_scatter_path = os.path.join(OUTPUT_DIR, "pooled_scatter_all_epsilons.png")
+    plot_pooled_scatter(pooled, aufgabe_order, kids_df, adults_df, pooled_scatter_path)
+
+    print(f"\n[pooled] Treated {pooled.n_total_inits} initializations (pooled across all "
+          f"epsilons, Weber fraction = 0.10, checkpoint = {CHECKPOINT_NAME}) as independent 'model humans'.")
+    print("[pooled] Correlation of the pooled mean item-error-rate against human data:")
+    print(pooled_corr_df.sort_values(["population", "measure"]).to_string(index=False))
+
+    kids_zrt = pooled_corr_df[(pooled_corr_df.population == "Kids_II") & (pooled_corr_df.measure == "zRT")]
+    adults_zrt = pooled_corr_df[(pooled_corr_df.population == "Adults") & (pooled_corr_df.measure == "zRT")]
+    if not kids_zrt.empty and not adults_zrt.empty:
+        kids_zrt = kids_zrt.iloc[0]
+        adults_zrt = adults_zrt.iloc[0]
+        print("\n--- Suggested paper paragraph ('All epsilons pooled as one model') ---")
+        print(
+            f"To ask whether the model's item-level difficulty profile resembles human "
+            f"performance independent of a specific exploration rate, we pooled the "
+            f"{pooled.n_total_inits} trained initializations across all {len(EPSILON_VALUES)} "
+            f"epsilon values (Weber fraction Omega = 0.10, checkpoint = {CHECKPOINT_NAME}), treating each "
+            f"initialization as an independent simulated participant. The resulting mean "
+            f"item-level error rate (with the across-initialization standard deviation "
+            f"reflecting simulated individual differences) correlated with children's zRT at "
+            f"r = {kids_zrt['pearson_r']:.2f} (p = {kids_zrt['pearson_p']:.3g}) and with "
+            f"adults' zRT at r = {adults_zrt['pearson_r']:.2f} (p = {adults_zrt['pearson_p']:.3g})."
+        )
+
+    print(f"\n[pooled] Saved:\n  {pooled_item_path}\n  {pooled_raw_path}\n  {pooled_corr_path}\n  {pooled_scatter_path}")
+    return pooled, pooled_corr_df
 
 
 # --------------------------------------------------------------------------
@@ -504,7 +755,7 @@ def main():
     print(
         f"To validate the model's item-level behavior against human performance, we "
         f"correlated the model's per-item error rate (averaged across {int(best_row['n_inits'])} "
-        f"initializations at Weber fraction Omega = 0.10, batch 600) with the mean "
+        f"initializations at Weber fraction Omega = 0.10, checkpoint = {CHECKPOINT_NAME}) with the mean "
         f"standardized reaction time (zRT) of children and adults on the same 96 addition "
         f"problems. At epsilon = {best_epsilon:.2f}, the model's error rate correlated with "
         f"children's zRT at r = {kids_zrt['pearson_r']:.2f} (p = {kids_zrt['pearson_p']:.3g}) "
@@ -518,6 +769,15 @@ def main():
     )
 
     print(f"\nSaved:\n  {item_rate_path}\n  {corr_path}\n  {profile_path}\n  {scatter_path}")
+
+    # ---------------------------------------------------------------
+    # Additional analysis: pool every initialization across every epsilon
+    # and treat the whole set as one unique model (many simulated "model
+    # humans"), compared against the human groups' averages. This is fully
+    # additive -- it reuses epsilon_results computed above and does not
+    # alter any of the per-epsilon outputs saved so far.
+    # ---------------------------------------------------------------
+    run_pooled_analysis(epsilon_results, aufgabe_order, kids_df, adults_df)
 
 
 if __name__ == "__main__":
