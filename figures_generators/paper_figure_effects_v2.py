@@ -1,72 +1,64 @@
-# USE: nohup python paper_figure_effects_v2.py 2 STUDY WI argmax decision_module 0.15 500 > logs_paper_effects.out 2>&1 &
+# USE: nohup python paper_figure_effects_v2.py 2 STUDY RI straight_through decision_module 0.10 600 > logs_paper_effects.out 2>&1 &
 #
 # ============================================================================
-# WHAT'S NEW vs paper_figure_effects.py
+# WHAT'S NEW vs the previous version
 # ============================================================================
-# The "barplot WITH experimental RT" figure (fname3) now also plots a set of
-# four white circles: the empirical HUMAN ERROR RATE for each of the four
-# carry/size categories (No Carry/Carry x Small/Large), computed directly
-# from the raw item-level Excel files (the same two files used by
-# paper_figure_item_level_validation.py), aggregated to the PARTICIPANT
-# level, and then averaged (equal-weight mean) across children and adults.
+# This version produces the NEW main-text Figure 4 (fig:Results_with_RT):
+# it plots ONLY the pooled Moeller et al. (2011) reaction times (children
+# and adults averaged with equal weight) against the model's error-rate
+# bars, on a real millisecond scale. All other human RT markers previously
+# shown on this figure (the Kids-only / Adults-only item-level markers, and
+# the literature-reported Klein et al. "Experimental RTs" stars) have been
+# REMOVED from this script -- Klein et al. and the Moeller et al. age-group
+# breakdown now live exclusively in the companion SM figure produced by
+# paper_figure_effects_v2_local_scales.py.
 #
-# "Aggregated to participant level" means: for each participant, first
-# compute their own mean error rate within each category (across whatever
-# items of that category they attempted), THEN average those per-participant
-# category means across participants. This gives every participant equal
-# weight regardless of how many trials of a given category they happened to
-# contribute -- as opposed to pooling all trials from all participants
-# together, which would over-weight participants who did more trials.
+# In addition, this version runs the participant-based 2x2 repeated-measures
+# ANOVA (Problem Size x Carry) that treats each of the model's N=20 weight
+# initializations as a "participant" (analogous to the human repeated-
+# measures ANOVA in Moeller et al., 2011), and writes the full descriptive +
+# inferential results to a plain-text file (Moeller_et_al_ANOVA_pooled.txt)
+# formatted for direct transcription into the manuscript's
+# "Participant-Based Analysis (F1-Analog)" section.
 #
-# Categorization reuses the classify_pairs() logic you supplied (kept
-# verbatim below), applied to each item's parsed addends.
+# Pipeline for the pooled human RT value (unchanged from the previous
+# version): the real data lives in the "Itemanalyse" sheet of the two raw
+# Excel files, one row per ITEM (already aggregated across participants
+# within each file), with:
+#     col "aufgabe" -- the item, e.g. "4 + 3 ="  ->  interpreted as (4, 3)
+#     col "RT"      -- the reaction time for that item (the value to compare)
+# Each item is classified into one of the four carry/size categories using
+# has_carry() + a threshold check (max_number=100), RT is averaged across
+# items within each category SEPARATELY for the kids file and the adults
+# file, and the two population means are then averaged together with equal
+# weight (NOT weighted by n) to get one pooled value per category.
 #
 # ============================================================================
-# CONFIG YOU MUST VERIFY -- new in this version (human error-rate circles)
+# CONFIG YOU MUST VERIFY
 # ============================================================================
-# I do not have access to your actual Excel files, so the raw-sheet layout
-# below is an ASSUMPTION, not a fact. If it's wrong, this script will fail
-# loudly (KeyError naming the missing column/sheet and listing what it did
-# find) rather than silently compute the wrong numbers -- fix the constants
-# below to match your real files and re-run.
-#
 # Paths to the two raw Excel files (the same files
 # paper_figure_item_level_validation.py reads for the "Itemanalyse" sheet).
 HUMAN_KIDS_XLS = "../datasets/RT_Analysis_Kids_II_modelling.xls"
 HUMAN_ADULTS_XLS = "../datasets/RT_Analyses_Adults_modelling.xls"
 
-# ASSUMPTION: raw per-participant, per-item trial data (one row per trial:
-# one participant x one item, with a correctness flag) lives in a sheet
-# called RAW_SHEET in each of the files above -- separate from the
-# already-aggregated "Itemanalyse" sheet used by the other script. If your
-# raw trial-level sheet has a different name or your files don't have one
-# at all (e.g. only the aggregated Itemanalyse sheet exists), update
-# RAW_SHEET, or set HUMAN_ERROR_CIRCLES_ENABLED = False below and supply the
-# four category means directly via MANUAL_HUMAN_ERROR_BY_CATEGORY instead.
-RAW_SHEET = "RawData"
-PARTICIPANT_COL = "subject"
-ITEM_COL = "aufgabe"
-CORRECT_COL = "correct"
+# Item-level sheet/columns, per your description.
+ITEM_SHEET = "Itemanalyse"
+ITEM_COL = "aufgabe"   # e.g. "4 + 3 =" -> (4, 3)
+RT_COL = "RT"          # reaction time -- the value we average per category
 
-# ASSUMPTION: 'aufgabe' items are encoded as two addends separated by '+'
-# (e.g. "23+45", "23 + 45"). See parse_aufgabe() below if that's wrong --
-# it's the one place addend parsing happens.
+# max_number for the carry/size categorization, per your instructions.
+MAX_NUMBER_FOR_CATEGORIES = 100
 
-# Master switch: set to False to skip the new circles entirely (e.g. while
-# you're still fixing up the CONFIG above) without touching the rest of the
-# figure.
-HUMAN_ERROR_CIRCLES_ENABLED = True
+CATEGORY_ORDER = ["no_carry_small", "carry_small", "no_carry_large", "carry_large"]
 
-# Fallback: if you already have the four category means computed some other
-# way (e.g. from a stats package) and don't want this script to touch the
-# raw Excel files at all, fill these in (percent error, 0-100) and the
-# script will use them instead of recomputing from RAW_SHEET.
-MANUAL_HUMAN_ERROR_BY_CATEGORY = {
-    # "no_carry_small": None,
-    # "carry_small": None,
-    # "no_carry_large": None,
-    # "carry_large": None,
-}
+# Real millisecond range for the Moeller et al. pooled RT axis (unchanged
+# from the "Moeller et al. Reaction Time (ms)" axis in the previous
+# combined Klein+Moeller figure).
+MIN_RT_POOLED, MAX_RT_POOLED = 2000, 6000
+
+# Master switch: set to False to skip the pooled human RT markers entirely
+# without touching the rest of the figure.
+HUMAN_RT_MARKERS_ENABLED = True
 
 import os
 import re
@@ -77,6 +69,7 @@ from matplotlib.lines import Line2D
 import seaborn as sns
 import numpy as np
 from matplotlib.patches import Patch
+from statsmodels.stats.anova import AnovaRM
 
 plt.rcParams['mathtext.fontset'] = 'stix'
 plt.rcParams['font.family'] = 'STIXGeneral'
@@ -105,188 +98,137 @@ RAW_DIR = f"{CLUSTER_DIR}/data/samuel_lozano/LearnLikeMe/{TRAINING_TYPE}/{NUMBER
 
 
 # ============================================================================
-# Human error-rate-by-category pipeline (new in this version)
+# Human item-level RT-by-category pipeline (used only to build the pooled
+# Moeller et al. value -- kids/adults are computed separately here purely as
+# an intermediate step, they are NOT plotted individually on this figure)
 # ============================================================================
-
-def classify_pairs(pairs, number_size):
-    """Verbatim from your snippet -- the canonical carry/size categorizer."""
-    categories = {
-        "carry_small": [],
-        "carry_large": [],
-        "no_carry_small": [],
-        "no_carry_large": []
-    }
-    max_val = 10 ** number_size
-    small_thresh = 0.4 * max_val
-    large_thresh = 0.6 * max_val
-    for a, b, total, carries in pairs:
-        has_any_carry = any(carries)
-        if total < small_thresh:
-            if has_any_carry:
-                categories["carry_small"].append((a, b, carries))
-            else:
-                categories["no_carry_small"].append((a, b, carries))
-        elif total > large_thresh:
-            if has_any_carry:
-                categories["carry_large"].append((a, b, carries))
-            else:
-                categories["no_carry_large"].append((a, b, carries))
-    return categories
-
 
 def parse_aufgabe(aufgabe):
     """
     Parse an 'aufgabe' item string into its two addends (a, b).
 
-    ASSUMPTION: items are encoded as "a+b" (e.g. "23+45", "23 + 45"). If
-    your files use a different encoding (zero-padded concatenation, a
-    different separator, or a numeric item-ID needing a lookup table),
-    update this function -- it's the one place addend parsing happens.
-    Returns None (and the caller counts/reports it) if parsing fails.
+    Handles "4 + 3 =" (trailing '=' and surrounding whitespace optional),
+    as well as plain "4+3". Returns None (and the caller counts/reports
+    it) if parsing fails.
     """
     s = str(aufgabe).strip()
-    m = re.match(r"^\s*(\d+)\s*\+\s*(\d+)\s*$", s)
+    s = re.sub(r"=+\s*$", "", s).strip()  # drop a trailing '='
+    m = re.match(r"^(\d+)\s*\+\s*(\d+)$", s)
     if m:
-        return int(m.group(1)), int(m.group(2))
+        return (int(m.group(1)), int(m.group(2)))
     return None
 
 
-def compute_carries(a, b, number_size):
+def has_carry(a, b, number_size):
     """
-    Digit-wise addition of a and b (each zero-padded to number_size
-    digits), returning a list of booleans -- one per digit position from
-    the ones place upward -- indicating whether that position produces a
-    carry-out. Used to determine has_any_carry for classify_pairs().
+    Digit-wise carry check, adapted verbatim from generate_carry_operations():
+    True if ANY corresponding digit pair of a and b sums to >= 10. This is
+    a per-digit check (no carry propagation across positions), matching
+    the snippet you supplied.
     """
-    a_digits = [int(d) for d in str(a).zfill(number_size)][::-1]
-    b_digits = [int(d) for d in str(b).zfill(number_size)][::-1]
-    carries = []
-    carry_in = 0
-    for da, db in zip(a_digits, b_digits):
-        s = da + db + carry_in
-        carry_out = s >= 10
-        carries.append(carry_out)
-        carry_in = 1 if carry_out else 0
-    return carries
+    for d in range(number_size):
+        digit_a = (a // (10 ** d)) % 10
+        digit_b = (b // (10 ** d)) % 10
+        if digit_a + digit_b >= 10:
+            return True
+    return False
 
 
-def build_category_lookup(items, number_size):
+def classify_item(a, b, max_number, number_size):
     """
-    Parses every unique 'aufgabe' item into its two addends and runs
-    classify_pairs() (verbatim, as given) to build an
-    {(a, b): category_name} lookup. Items that fall in the excluded
-    mid-range total (neither "small" nor "large") are simply absent from
-    the lookup, matching classify_pairs()'s own behavior.
-
-    ASSUMPTION: (a, b) addend pairs are unique per item, which should hold
-    for a two-digit-addition stimulus set. If two different items share
-    the same (a, b), this prints a warning -- check parse_aufgabe() and
-    your item set if you see it.
+    Classifies a single (a, b) addend pair into one of the four
+    carry/size categories, adapted from generate_problem_size_datasets():
+    small_threshold = int(0.4 * max_number), large_min = int(0.6 * max_number),
+    large_max = max_number. Items whose total falls in the excluded
+    mid-range (neither small nor large) return None, matching the
+    original datasets' behavior of simply not including them.
     """
-    pairs = []
-    parsed_by_item = {}
-    unparsed = []
-    for item in items:
-        parsed = parse_aufgabe(item)
-        if parsed is None:
-            unparsed.append(item)
-            continue
-        a, b = parsed
-        total = a + b
-        carries = compute_carries(a, b, number_size)
-        pairs.append((a, b, total, carries))
-        parsed_by_item[item] = (a, b)
-
-    if unparsed:
-        print(f"[WARN] Could not parse {len(unparsed)} item(s) as 'a+b': "
-              f"{unparsed[:10]}{'...' if len(unparsed) > 10 else ''}. "
-              f"Update parse_aufgabe() if your item encoding differs.")
-
-    if len(set(parsed_by_item.values())) != len(parsed_by_item):
-        print("[WARN] Some items share the same (a, b) addend pair -- the "
-              "category lookup may not map back to items uniquely. Check "
-              "parse_aufgabe() and your item set.")
-
-    categories = classify_pairs(pairs, number_size)
-    lookup = {}
-    for cat_name, entries in categories.items():
-        for (a, b, carries) in entries:
-            lookup[(a, b)] = cat_name
-    return lookup, parsed_by_item
+    small_threshold = int(0.4 * max_number)
+    large_min = int(0.6 * max_number)
+    large_max = max_number
+    total = a + b
+    if total < small_threshold:
+        return "carry_small" if has_carry(a, b, number_size) else "no_carry_small"
+    elif large_min < total < large_max:
+        return "carry_large" if has_carry(a, b, number_size) else "no_carry_large"
+    return None
 
 
-def compute_participant_category_error(raw_xls_path, number_size):
+def compute_item_category_rt(xls_path, sheet_name, item_col, rt_col,
+                              max_number, number_size):
     """
-    Returns {category_name: mean_error_rate_percent} for ONE population
-    (one Excel file), aggregated at the PARTICIPANT level: for each
-    participant, compute their mean error rate within each category, then
-    average those per-participant means across participants (equal weight
-    per participant).
+    Returns {category_name: mean_RT} for ONE population (one Excel file),
+    computed directly at the ITEM level: each row of `sheet_name` is one
+    item (already aggregated across participants in this sheet), so the
+    category mean is just the mean of `rt_col` over the items that fall
+    in that category -- no participant-level step needed.
 
-    Raises KeyError with the actual columns found if RAW_SHEET /
-    PARTICIPANT_COL / ITEM_COL / CORRECT_COL don't match your file, rather
-    than silently producing wrong numbers.
+    Raises KeyError with the actual columns found if item_col/rt_col
+    don't match your file, rather than silently computing the wrong
+    numbers.
     """
-    try:
-        df = pd.read_excel(raw_xls_path, sheet_name=RAW_SHEET)
-    except ValueError as e:
-        raise ValueError(
-            f"Could not find sheet '{RAW_SHEET}' in {raw_xls_path}. Update "
-            f"RAW_SHEET at the top of this script to match your file. "
-            f"Original error: {e}"
-        )
-
-    missing = [c for c in (PARTICIPANT_COL, ITEM_COL, CORRECT_COL) if c not in df.columns]
+    df = pd.read_excel(xls_path, sheet_name=sheet_name)
+    missing = [c for c in (item_col, rt_col) if c not in df.columns]
     if missing:
         raise KeyError(
-            f"Expected columns {missing} in sheet '{RAW_SHEET}' of {raw_xls_path}, "
-            f"found: {list(df.columns)}. Update PARTICIPANT_COL / ITEM_COL / "
-            f"CORRECT_COL at the top of this script."
+            f"Expected columns {missing} in sheet '{sheet_name}' of {xls_path}, "
+            f"found: {list(df.columns)}."
         )
 
     df = df.copy()
-    df[ITEM_COL] = df[ITEM_COL].astype(str).str.strip()
-
-    lookup, parsed_by_item = build_category_lookup(df[ITEM_COL].unique(), number_size)
-    df["category"] = df[ITEM_COL].map(lambda it: lookup.get(parsed_by_item.get(it)))
-
+    parsed = df[item_col].apply(parse_aufgabe)
     n_before = len(df)
-    df = df.dropna(subset=["category"])
-    print(f"[INFO] {raw_xls_path}: kept {len(df)}/{n_before} trials after "
-          f"categorization (mid-range-total items and unparseable 'aufgabe' "
-          f"strings are excluded, same as classify_pairs()).")
 
-    df[CORRECT_COL] = pd.to_numeric(df[CORRECT_COL], errors="coerce")
-    df["error_pct"] = 100.0 * (1.0 - df[CORRECT_COL])
+    unparsed_mask = parsed.isna()
+    if unparsed_mask.any():
+        examples = df.loc[unparsed_mask, item_col].astype(str).unique().tolist()
+        print(f"[WARN] {xls_path}: could not parse {int(unparsed_mask.sum())} "
+              f"item(s) as 'a+b': {examples[:10]}"
+              f"{'...' if len(examples) > 10 else ''}. Update parse_aufgabe() "
+              f"if your item encoding differs.")
 
-    participant_cat_means = (
-        df.groupby([PARTICIPANT_COL, "category"])["error_pct"].mean().reset_index()
+    df = df.loc[~unparsed_mask].copy()
+    parsed = parsed.loc[~unparsed_mask]
+    df["_a"] = parsed.apply(lambda t: t[0])
+    df["_b"] = parsed.apply(lambda t: t[1])
+    df["category"] = df.apply(
+        lambda row: classify_item(row["_a"], row["_b"], max_number, number_size),
+        axis=1,
     )
-    category_means = participant_cat_means.groupby("category")["error_pct"].mean()
-    return category_means.to_dict()
+
+    n_no_cat = int(df["category"].isna().sum())
+    df = df.dropna(subset=["category"])
+    print(f"[INFO] {xls_path}: kept {len(df)}/{n_before} items after parsing + "
+          f"categorization ({n_no_cat} fell in the excluded mid-range total, "
+          f"same as generate_problem_size_datasets()).")
+
+    df[rt_col] = pd.to_numeric(df[rt_col], errors="coerce")
+    cat_means = df.groupby("category")[rt_col].mean()
+    cat_counts = df.groupby("category")[rt_col].count()
+
+    for cat in CATEGORY_ORDER:
+        if cat in cat_means.index:
+            print(f"[INFO] {xls_path}: category '{cat}' -> mean RT = "
+                  f"{cat_means[cat]:.1f} (n items = {int(cat_counts[cat])})")
+        else:
+            print(f"[WARN] {xls_path}: no items found for category '{cat}'.")
+
+    return cat_means.to_dict()
 
 
-def compute_pooled_human_error_by_category(number_size):
+def compute_pooled_rt_by_category(kids_dict, adults_dict):
     """
-    Computes participant-level category error rates separately for kids and
-    adults, then averages the two populations with equal weight (simple
-    mean of the two population means -- NOT weighted by n) to get one
-    number per category.
+    Equal-weight mean of the kids and adults per-category RT means (NOT
+    weighted by n) -- one pooled number per category. This is the value
+    plotted in the new main-text Figure 4.
     """
-    if MANUAL_HUMAN_ERROR_BY_CATEGORY and all(
-        v is not None for v in MANUAL_HUMAN_ERROR_BY_CATEGORY.values()
-    ) and len(MANUAL_HUMAN_ERROR_BY_CATEGORY) == 4:
-        print("[INFO] Using MANUAL_HUMAN_ERROR_BY_CATEGORY instead of recomputing from raw Excel files.")
-        return dict(MANUAL_HUMAN_ERROR_BY_CATEGORY)
-
-    kids_cat = compute_participant_category_error(HUMAN_KIDS_XLS, number_size)
-    adults_cat = compute_participant_category_error(HUMAN_ADULTS_XLS, number_size)
-
     pooled = {}
-    for cat in ("no_carry_small", "carry_small", "no_carry_large", "carry_large"):
-        vals = [d[cat] for d in (kids_cat, adults_cat) if cat in d and not np.isnan(d[cat])]
+    for cat in CATEGORY_ORDER:
+        vals = [d[cat] for d in (kids_dict, adults_dict)
+                if cat in d and d[cat] is not None and not np.isnan(d[cat])]
         if not vals:
-            print(f"[WARN] No data for category '{cat}' in either population.")
+            print(f"[WARN] No RT data for category '{cat}' in either "
+                  f"population -- pooled mean set to NaN.")
             pooled[cat] = np.nan
         else:
             pooled[cat] = float(np.mean(vals))
@@ -294,7 +236,152 @@ def compute_pooled_human_error_by_category(number_size):
 
 
 # ============================================================================
-# Main analysis / figures (unchanged aside from the new circles in fname3)
+# Participant-based ANOVA (F1-Analog): the model's N weight initializations
+# stand in for human "participants" in a 2x2 (Problem Size x Carry)
+# repeated-measures ANOVA, analogous to the human ANOVA reported in
+# Moeller et al. (2011). This is entirely a property of the MODEL's own
+# error rates (it does not use the human RT data at all) -- it is the
+# statistic that gets qualitatively compared against Moeller et al.'s
+# reported pattern in the manuscript text.
+# ============================================================================
+
+def _partial_eta_sq(F, df_num, df_den):
+    """Partial eta^2 from F and its degrees of freedom: (F*df1)/(F*df1+df2)."""
+    return (F * df_num) / (F * df_num + df_den)
+
+
+def run_participant_based_anova(epoch_data, cols_ordered, output_path,
+                                 omega_value, selected_epoch):
+    """
+    Builds a long-format (subject x ProblemSize x Carry) table from the
+    model's per-initialization error rates at `selected_epoch` (one row of
+    `epoch_data` per weight initialization, identified by the 'run'
+    column), runs the 2x2 repeated-measures ANOVA, and writes descriptive
+    statistics plus the full ANOVA table (F, df, p, partial eta^2) for
+    both main effects and their interaction to `output_path` as plain
+    text, formatted for direct transcription into the manuscript's
+    "Participant-Based Analysis (F1-Analog)" section.
+    """
+    if "run" not in epoch_data.columns:
+        print("[WARN] 'run' column not found in epoch_data -- cannot identify "
+              "individual initializations as 'subjects'. Skipping ANOVA.")
+        return
+
+    # category column -> (ProblemSize, Carry, human-readable label), in the
+    # canonical small/no-carry, small/carry, large/no-carry, large/carry order.
+    factor_map = {
+        cols_ordered[0]: ("Small", "NoCarry", "small/no-carry"),
+        cols_ordered[1]: ("Small", "Carry", "small/carry"),
+        cols_ordered[2]: ("Large", "NoCarry", "large/no-carry"),
+        cols_ordered[3]: ("Large", "Carry", "large/carry"),
+    }
+    label_order = [lbl for _, _, lbl in factor_map.values()]
+
+    long_rows = []
+    for _, row in epoch_data.iterrows():
+        subject = row["run"]
+        for col, (size, carry, label) in factor_map.items():
+            if col in epoch_data.columns and pd.notna(row[col]):
+                error_rate = 100.0 - float(row[col])
+                long_rows.append({
+                    "subject": subject, "ProblemSize": size, "Carry": carry,
+                    "category_label": label, "ErrorRate": error_rate,
+                })
+    long_df = pd.DataFrame(long_rows)
+
+    if long_df.empty:
+        print("[WARN] No data available to run the participant-based ANOVA.")
+        return
+
+    # AnovaRM requires a complete, balanced design: keep only subjects
+    # (initializations) with all four categories present.
+    complete_subjects = (
+        long_df.groupby("subject")["category_label"].nunique()
+        .loc[lambda s: s == 4].index
+    )
+    n_dropped = long_df["subject"].nunique() - len(complete_subjects)
+    if n_dropped > 0:
+        print(f"[WARN] Dropping {n_dropped} initialization(s) with incomplete "
+              f"category data before running the repeated-measures ANOVA.")
+    long_df = long_df[long_df["subject"].isin(complete_subjects)].copy()
+    n_used = long_df["subject"].nunique()
+
+    # --- Descriptive statistics per category ---
+    desc = (
+        long_df.groupby("category_label")["ErrorRate"]
+        .agg(["mean", "std", "count"])
+        .reindex(label_order)
+    )
+
+    # --- 2x2 repeated-measures ANOVA ---
+    aovrm = AnovaRM(long_df, depvar="ErrorRate", subject="subject",
+                     within=["ProblemSize", "Carry"])
+    fit = aovrm.fit()
+    table = fit.anova_table.copy()
+    table["partial_eta_sq"] = [
+        _partial_eta_sq(r["F Value"], r["Num DF"], r["Den DF"])
+        for _, r in table.iterrows()
+    ]
+
+    # --- Write everything to a plain-text file ---
+    with open(output_path, "w") as f:
+        f.write("Participant-Based Analysis (F1-Analog) -- Moeller et al. pooled benchmark\n")
+        f.write("(Figure 4 of the main text: model bars vs. pooled Moeller et al. RTs)\n")
+        f.write("=" * 78 + "\n")
+        f.write(f"Omega = {omega_value}, Epoch = {int(selected_epoch)}, "
+                f"N initializations (subjects) used = {n_used}\n\n")
+
+        f.write("Descriptive statistics (model mean error rate %, across initializations):\n")
+        for label in label_order:
+            row = desc.loc[label]
+            f.write(f"  {label:<15s} M = {row['mean']:.2f}%  "
+                    f"(SD = {row['std']:.2f}%, n = {int(row['count'])})\n")
+        f.write("\n")
+
+        f.write("2x2 repeated-measures ANOVA (Problem Size x Carry) on model error rate:\n")
+        effect_names = {"ProblemSize": "Problem Size", "Carry": "Carry-over",
+                         "ProblemSize:Carry": "Problem Size x Carry"}
+        for effect, row in table.iterrows():
+            F = row["F Value"]
+            df1 = row["Num DF"]
+            df2 = row["Den DF"]
+            p = row["Pr > F"]
+            eta2 = row["partial_eta_sq"]
+            p_str = "< .001" if p < .001 else f"= {p:.3f}"
+            eta2_str = "< .001" if eta2 < .001 else f"= {eta2:.2f}"
+            name = effect_names.get(effect, effect)
+            f.write(f"  {name:<22s} F({df1:.0f}, {df2:.0f}) = {F:.2f}, "
+                    f"p {p_str}, partial eta^2 {eta2_str}\n")
+        f.write("\n")
+
+        f.write("Ready-to-paste sentence skeletons (verify numbers before use):\n")
+        f.write(
+            "  Mean error rates (across the {n} initializations, epoch {ep}, "
+            "$\\omega$={om}) were: small/no-carry $M$={m0:.2f}\\% ($SD$={s0:.2f}\\%); "
+            "small/carry $M$={m1:.2f}\\% ($SD$={s1:.2f}\\%); large/no-carry "
+            "$M$={m2:.2f}\\% ($SD$={s2:.2f}\\%); large/carry $M$={m3:.2f}\\% "
+            "($SD$={s3:.2f}\\%).\n".format(
+                n=n_used, ep=int(selected_epoch), om=omega_value,
+                m0=desc.loc["small/no-carry", "mean"], s0=desc.loc["small/no-carry", "std"],
+                m1=desc.loc["small/carry", "mean"], s1=desc.loc["small/carry", "std"],
+                m2=desc.loc["large/no-carry", "mean"], s2=desc.loc["large/no-carry", "std"],
+                m3=desc.loc["large/carry", "mean"], s3=desc.loc["large/carry", "std"],
+            )
+        )
+        for effect, row in table.iterrows():
+            F = row["F Value"]; df1 = row["Num DF"]; df2 = row["Den DF"]
+            p = row["Pr > F"]; eta2 = row["partial_eta_sq"]
+            p_str = "p<.001" if p < .001 else f"p={p:.3f}"
+            eta2_str = "<.001" if eta2 < .001 else f"={eta2:.2f}"
+            name = effect_names.get(effect, effect)
+            f.write(f"  {name}: $F({df1:.0f},{df2:.0f})={F:.2f}$, {p_str}, "
+                    f"partial $\\eta^2${eta2_str}\n")
+
+    print(f"[INFO] Participant-based ANOVA (Moeller-pooled benchmark) written to: {output_path}")
+
+
+# ============================================================================
+# Main analysis / figures
 # ============================================================================
 
 def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
@@ -342,7 +429,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
     # --- Figure 1: Errors over epochs (aggregated across all epsilons) ---
     acc_labels = ["Small - No Carry", "Small - Carry", "Large - No Carry", "Large - Carry"]
     colors = ["#999999", "#4D4D4D", "#999999", "#4D4D4D"]  # light grey, dark grey, light grey, dark grey
-    linestyles = ["-", "-", ":", ":"]  # solid = blue family, dashed = red family
+    linestyles = ["-", "-", (0, (1, 3)), (0, (1, 3))]  # solid = blue family, dashed = red family
 
     pw = {}
     for col in acc_cols:
@@ -425,7 +512,7 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
 
             ax.set_ylabel('Model Mean Error Rate (%)', fontsize=32)
             ax.set_xticks([0.4, 2.6])
-            ax.set_xticklabels(['Small', 'Large'], fontsize=28)
+            ax.set_xticklabels(['Small', 'Large'], fontsize=30)
             ax.set_xlabel('Problem Size', fontsize=32)
             ax.tick_params(axis='y', labelsize=28)
             ax.set_ylim(0, 105)
@@ -444,83 +531,79 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
             plt.close()
             print(f"Figure 2 (without RT) saved to: {fname2}")
 
-            # --- Barplot WITH experimental RT (+ NEW human error-rate circles) ---
+            # --- Participant-based ANOVA (model's N initializations as "participants") ---
+            anova_output_path = os.path.join(figures_dir, "Moeller_et_al_ANOVA_pooled.txt")
+            try:
+                run_participant_based_anova(epoch_data, cols_ordered, anova_output_path,
+                                             omega_value, selected_epoch)
+            except Exception as e:
+                print(f"[WARN] Participant-based ANOVA failed -- {e}")
+
+            # --- Barplot WITH Moeller et al. pooled human RT only (main-text Figure 4) ---
             fig, ax = plt.subplots(figsize=(12, 8))
             bars = ax.bar(x_positions, means, yerr=np.sqrt(stds), capsize=5, color=colors,
                          alpha=0.8, edgecolor='black', linewidth=1.5, width=0.7)
 
-            # Experimental reaction times data
-            min_RT = 1250
-            max_RT = 4137.5
-            rt_values = [1400, 1800, 2700, 3200]  # RT(SNC), RT(SC), RT(LNC), RT(LC)
-
             ax2 = ax.twinx()
             ax2.set_ylabel('Human Reaction Time (ms)', fontsize=32)
-            ax2.set_ylim(min_RT, max_RT)
+            ax2.set_ylim(MIN_RT_POOLED, MAX_RT_POOLED)
             ax2.tick_params(axis='y', labelsize=28)
 
-            rt_normalized = [(rt - min_RT) / (max_RT - min_RT) * 105 for rt in rt_values]
-
-            ax.plot(x_positions[0:2], rt_normalized[0:2], color='black', linewidth=2.5,
-                    linestyle='-', zorder=4)
-            ax.plot(x_positions[2:4], rt_normalized[2:4], color='black', linewidth=2.5,
-                    linestyle='-', zorder=4)
-
-            ax.scatter(x_positions, rt_normalized, marker='*', s=1000, color='black', edgecolors='dimgray', linewidth=1,
-                      zorder=5, label='Experimental RTs')
-
-            # --- NEW: human error rate (circles), from raw per-participant data,
-            # aggregated participant-level and averaged over kids + adults.
-            # Plotted directly on the primary (error-rate) axis -- no
-            # normalization needed since it's already on the same 0-100% scale
-            # as the model bars.
-            human_error_plotted = False
-            if HUMAN_ERROR_CIRCLES_ENABLED:
+            human_rt_plotted = False
+            if HUMAN_RT_MARKERS_ENABLED:
                 try:
-                    human_error_by_cat = compute_pooled_human_error_by_category(NUMBER_SIZE)
-                    human_error_ordered = [
-                        human_error_by_cat.get("no_carry_small", np.nan),
-                        human_error_by_cat.get("carry_small", np.nan),
-                        human_error_by_cat.get("no_carry_large", np.nan),
-                        human_error_by_cat.get("carry_large", np.nan),
-                    ]
-                    ax.plot(x_positions[0:2], human_error_ordered[0:2], color='dimgray',
-                            linewidth=2.5, linestyle='--', zorder=4)
-                    ax.plot(x_positions[2:4], human_error_ordered[2:4], color='dimgray',
-                            linewidth=2.5, linestyle='--', zorder=4)
-                    ax.scatter(x_positions, human_error_ordered, marker='o', s=350,
-                               color='white', edgecolors='black', linewidth=2,
-                               zorder=6, label='Human Error Rate (pooled)')
-                    human_error_plotted = True
+                    kids_rt_by_cat = compute_item_category_rt(
+                        HUMAN_KIDS_XLS, ITEM_SHEET, ITEM_COL, RT_COL,
+                        MAX_NUMBER_FOR_CATEGORIES, NUMBER_SIZE,
+                    )
+                    adults_rt_by_cat = compute_item_category_rt(
+                        HUMAN_ADULTS_XLS, ITEM_SHEET, ITEM_COL, RT_COL,
+                        MAX_NUMBER_FOR_CATEGORIES, NUMBER_SIZE,
+                    )
+                    pooled_rt_by_cat = compute_pooled_rt_by_category(kids_rt_by_cat, adults_rt_by_cat)
+
+                    print(f"[INFO] Kids RT by category (intermediate only):   {kids_rt_by_cat}")
+                    print(f"[INFO] Adults RT by category (intermediate only): {adults_rt_by_cat}")
+                    print(f"[INFO] Pooled (Moeller et al.) RT by category:    {pooled_rt_by_cat}")
+
+                    pooled_rt = [pooled_rt_by_cat.get(cat, np.nan) for cat in CATEGORY_ORDER]
+
+                    ax2.plot(x_positions[0:2], pooled_rt[0:2], color='dimgray', linewidth=2,
+                             linestyle='--', zorder=4)
+                    ax2.plot(x_positions[2:4], pooled_rt[2:4], color='dimgray', linewidth=2,
+                             linestyle='--', zorder=4)
+                    ax2.scatter(x_positions, pooled_rt, marker='*', s=30 ** 2, facecolor='white',
+                                edgecolors='black', linewidth=2, zorder=6, label='Experimental RTs')
+                    human_rt_plotted = True
                 except (KeyError, ValueError, FileNotFoundError) as e:
-                    print(f"[WARN] Skipping human error-rate circles -- {e}")
+                    print(f"[WARN] Skipping Moeller et al. pooled RT markers -- {e}")
 
             ax.set_ylabel('Model Mean Error Rate (%)', fontsize=32)
             ax.set_xticks([0.4, 2.6])
-            ax.set_xticklabels(['Small', 'Large'], fontsize=28)
+            ax.set_xticklabels(['Small', 'Large'], fontsize=30)
             ax.set_xlabel('Problem Size', fontsize=32)
             ax.tick_params(axis='y', labelsize=28)
             ax.set_ylim(0, 105)
             ax.grid(axis="y", linestyle="--", linewidth=1, color="gray", alpha=0.7)
 
             legend_elements_with_rt = [
-                Patch(facecolor=colors[0], edgecolor='black', label='No Carry', alpha=0.8),
-                Patch(facecolor=colors[1], edgecolor='black', label='Carry', alpha=0.8),
-                Line2D([0], [0], marker='*', color='w', markerfacecolor='black', markeredgecolor='black',
-                       markersize=25, label='Experimental RTs'),
+                Patch(facecolor=colors[0], edgecolor='black', label='Without carry-over', alpha=0.8),
+                Patch(facecolor=colors[1], edgecolor='black', label='With carry-over', alpha=0.8),
             ]
-            if human_error_plotted:
+            if human_rt_plotted:
                 legend_elements_with_rt.append(
-                    Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
-                           markeredgecolor='black', markersize=20,
-                           label='Human Error Rate (pooled)')
+                    Line2D([0], [0], marker='*', color='w', markerfacecolor='white',
+                           markeredgecolor='black', markersize=24, label='Human data')
                 )
-            ax.legend(handles=legend_elements_with_rt, loc='upper left', fontsize=32, framealpha=0.95)
+            ax.legend(handles=legend_elements_with_rt, loc='upper left', fontsize=30, framealpha=0.95)
 
-            fname3 = os.path.join(figures_dir, f"barplot_errors_omega_{safe_om}_epoch_{int(selected_epoch)}_with_RT_{MODEL_TYPE}.png")
+            fname3 = os.path.join(
+                figures_dir,
+                f"barplot_errors_omega_{safe_om}_epoch_{int(selected_epoch)}_with_RT_pooled_Moeller_local_scale_{MODEL_TYPE}.png"
+            )
             plt.savefig(fname3, bbox_inches='tight', dpi=300)
             plt.close()
-            print(f"Figure 2 (with RT) saved to: {fname3}")
+            print(f"Figure 3 (Moeller pooled RT, main-text Figure 4) saved to: {fname3}")
         else:
             print(f"No data found for last epoch")
     else:

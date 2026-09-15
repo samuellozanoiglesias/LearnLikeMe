@@ -3,7 +3,7 @@
 
 cluster=cuenca
 number_size=2  # Number of digits in the numbers to be added (2 for two-digit addition)
-study_name=19_STUDY-FIXED_EXP_DECAY_0.05-OMEGA_0.10  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+study_name=APPENDIX-FIXED_EXP_DECAY_0.05  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 param_type=RI  # "WI" for wise initialization or "RI" for random initialization
 model_type=straight_through  # "argmax" or "vector" or "straight_through"
 epochs=2000  # Number of training epochs
@@ -14,7 +14,7 @@ training_distribution_type=Decreasing_exponential  # "Decreasing_exponential" or
 alpha_curriculum=0.05  # Only used if training_distribution_type is "Decreasing_exponential"
 training_mode=decision_only # "decision_only" (freeze extractors, original behavior) or "all" (unfreeze + jointly train extractors too)
 
-MAX_PARALLEL=10  # Maximum number of parallel simulations
+MAX_PARALLEL=20  # Maximum number of parallel simulations
 
 # Forzar punto decimal para seq
 export LC_NUMERIC=C
@@ -26,11 +26,11 @@ PYTHON_SCRIPT="../train_decision_module.py"
 mkdir -p logs
 
 # Build arrays of omegas and epsilons and compute totals
-init_omegas=0.10
-end_omegas=0.10
+init_omegas=0
+end_omegas=1.0
 step_omegas=0.05
 
-init_epsilons=0.0
+init_epsilons=0.5
 end_epsilons=10.0
 step_epsilons=0.5
 
@@ -48,13 +48,14 @@ wait_for_slot() {
 }
 
 # Launch each individual task with slot control
-for e_idx in "${!epsilons[@]}"; do
-    epsilon="${epsilons[$e_idx]}"
-    epsilon_fmt=$(printf "%.2f" $epsilon)
 
-    for o_idx in "${!omegas[@]}"; do
-        omega="${omegas[$o_idx]}"
-        omega_fmt=$(printf "%.2f" $omega)
+for o_idx in "${!omegas[@]}"; do
+    omega="${omegas[$o_idx]}"
+    omega_fmt=$(printf "%.2f" $omega)
+
+    for e_idx in "${!epsilons[@]}"; do
+        epsilon="${epsilons[$e_idx]}"
+        epsilon_fmt=$(printf "%.2f" $epsilon)
         current=$(( o_idx * epsilon_count + e_idx + 1 ))
         percent=$(( current * 100 / total_tasks ))
 

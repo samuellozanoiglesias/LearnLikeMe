@@ -2,13 +2,15 @@
 # Use: nohup bash automatic-train_extractor_modules.sh > logs_extractor.out 2>&1 &
 
 cluster=cuenca
-module_name=carry_extractor  # "unit_extractor" or "carry_extractor"
-study_name=19_STUDY-FIXED_EXP_DECAY_0.05-OMEGA_0.10  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
+module_name=unit_extractor  # "unit_extractor" or "carry_extractor"
+study_name=APPENDIX-FIXED_EXP_DECAY_0.05  # Name of the study ('FIRST_STUDY', 'SECOND_STUDY', 'THIRD_STUDY-NO_AVERAGED_OMEGA'...)
 fixed_variability=Yes  # "Yes" or "No" to use fixed/increasing variability for the std of inputs
 early_stop=No  # "Yes" or "No" to use early stopping during training
 training_distribution_type=decreasing_exponential  # "decreasing_exponential" or "balanced"
 alpha_curriculum=0.05  # Only used if training_distribution_type is "decreasing_exponential"
     
+MAX_PARALLEL=20  # Maximum number of parallel simulations
+
 # Forzar punto decimal para seq
 export LC_NUMERIC=C
 
@@ -19,16 +21,16 @@ PYTHON_SCRIPT="../train_extractor_modules.py"
 mkdir -p logs
 
 # Build array of omegas and compute total
-init_omegas=0.1
-end_omegas=0.1
+init_omegas=0
+end_omegas=1.0
 step_omegas=0.05
 
 init_epsilons=0.5
-end_epsilons=0.5
-step_epsilons=0.05
+end_epsilons=10.0
+step_epsilons=0.5
 
-init_seeds=100
-end_seeds=120
+init_seeds=0
+end_seeds=0
 step_seeds=1
 
 mapfile -t omegas < <(seq $init_omegas $step_omegas $end_omegas)
@@ -47,13 +49,13 @@ wait_for_slot() {
 }
 
 # Launch each individual task with slot control
-for e_idx in "${!epsilons[@]}"; do
-    epsilon="${epsilons[$e_idx]}"
-    epsilon_fmt=$(printf "%.2f" $epsilon)
-
-    for o_idx in "${!omegas[@]}"; do
-        omega="${omegas[$o_idx]}"
-        omega_fmt=$(printf "%.2f" $omega)
+for o_idx in "${!omegas[@]}"; do
+    omega="${omegas[$o_idx]}"
+    omega_fmt=$(printf "%.2f" $omega)
+        
+    for e_idx in "${!epsilons[@]}"; do
+        epsilon="${epsilons[$e_idx]}"
+        epsilon_fmt=$(printf "%.2f" $epsilon)
 
         for s_idx in "${!seeds[@]}"; do
             seed="${seeds[$s_idx]}"

@@ -197,10 +197,10 @@ def analyze_multidigit_module(raw_dir, figures_dir, omega_value, param_type):
                          alpha=0.8, edgecolor='black', linewidth=1.5, width=0.7)
             
             # Experimental reaction times data
-            min_RT = 1250  # Minimum RT for scaling
-            max_RT = 4137.5  # Maximum RT for scaling
-            rt_values = [1400, 1800, 2700, 3200]  # RT(SNC), RT(SC), RT(LNC), RT(LC)
-            
+            min_RT = 1250
+            max_RT = 3950
+            rt_values = [1475, 1867, 2580, 3198]  # RT(SNC), RT(SC), RT(LNC), RT(LC)
+
             # Create secondary y-axis for reaction times
             ax2 = ax.twinx()
             ax2.set_ylabel('Human Reaction Time (ms)', fontsize=32)

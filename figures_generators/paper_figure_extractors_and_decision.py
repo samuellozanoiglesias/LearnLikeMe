@@ -1,4 +1,4 @@
-# USE: nohup python paper_figure_extractors_and_decision.py 2 STUDY WI argmax > logs_paper_figs_extractor.out 2>&1 &
+# USE: nohup python paper_figure_extractors_and_decision.py 2 STUDY RI straight_through > logs_paper_figs_extractor.out 2>&1 &
 
 import os
 import sys
